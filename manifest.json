@@ -1,0 +1,8 @@
+{
+  "display_name": "Reminder Plugin",
+  "plugin_id": "reminder_plugin",
+  "version": "1.0",
+  "author": "KiraAI Team",
+  "description": "智能提醒插件 v1.0 - 提供个性化的提醒服务，帮助用户高效管理时间和任务。",
+  "repo": null
+}

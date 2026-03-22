@@ -1,0 +1,14 @@
+{
+  "admin_users": {
+    "name": "管理员QQ",
+    "type": "list",
+    "default": [],
+    "hint": "填入可以添加提醒任务的超级管理员（一行一个）"
+  },
+  "web_port": {
+    "name": "Web 大屏端口",
+    "type": "integer",
+    "default": 8080,
+    "hint": "Web 大屏服务绑定端口，若被占用系统将在 8080-8089 范围内自动递增尝试"
+  }
+}
