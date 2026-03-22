@@ -15,7 +15,7 @@
 ---
 
 ## 📸 界面预览 (Web UI & 聊天交互)
-<img width="1857" height="952" alt="image" src="https://github.com/user-attachments/assets/678f2578-3489-4c05-83de-76b3800464ba" />
+<img width="2104" height="1326" alt="image" src="https://github.com/user-attachments/assets/ca5d2863-6e03-4a2a-8846-42b3e64d2472" />
 
 ---
 
