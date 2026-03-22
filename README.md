@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🌟 KiraAI Reminder Plugin v5.0
+# 🌟 KiraAI Reminder Plugin v1.0
 
 **高可用、全功能、智能化的 KiraAI 定时提配生态插件**
 
