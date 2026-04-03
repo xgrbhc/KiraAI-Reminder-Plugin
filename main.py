@@ -1,7 +1,7 @@
 """
-KiraAI 提醒插件 v1.0 
+KiraAI 提醒插件 v2.0
 
-v1.0 功能说明：
+v2.0 功能说明：
 - 从独立工具 (data/tools/reminder.py) 迁移为标准插件 (data/plugins/)
 - 消除 core.services.runtime 依赖（该模块在 v2.0.0 中不存在）
 - 消除调用栈爬帧 hack（get_current_session_id）
@@ -193,7 +193,7 @@ class ReminderStorage:
 
 class ReminderPlugin(BasePlugin):
     """
-    提醒插件 v4.1 — 稳定性优化版。
+    提醒插件 v2.0 - 稳定性优化版。
     已增量升级 Phase 4: 多级权限隔离与极简管理员全览视图。
     """
 

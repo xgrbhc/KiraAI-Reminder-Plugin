@@ -1,10 +1,10 @@
 <div align="center">
 
-# 🌟 KiraAI Reminder Plugin v5.0
+# 🌟 KiraAI Reminder Plugin
 
 **高可用、全功能、智能化的 KiraAI 定时提配生态插件**
 
-![Version](https://img.shields.io/badge/version-v5.0-blue.svg)
+![Version](https://img.shields.io/badge/version-v2.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![KiraAI](https://img.shields.io/badge/KiraAI-Plugin-orange.svg)
 
@@ -15,7 +15,7 @@
 ---
 
 ## 📸 界面预览 (Web UI & 聊天交互)
-
+<img width="2104" height="1326" alt="image" src="https://github.com/user-attachments/assets/ca5d2863-6e03-4a2a-8846-42b3e64d2472" />
 
 ---
 
@@ -54,6 +54,11 @@ KiraAI/
 - `admin_users`：超级管理员账号/QQ 数组录入。
 - `web_port`：Web 大屏监控运行端口（默认为 `8080`，遇冲突时自动向 8089 顺延寻找可用端口）。
 
+### 3. 依赖
+插件分发或在干净环境安装时，请一并安装 `requirements.txt` 中的依赖：
+
+- `APScheduler>=3.10,<4`
+
 ---
 
 ## 💻 人类直连快捷指令 (无需 AI 思考)
@@ -71,7 +76,7 @@ KiraAI/
 
 💂 **系统超管特权网**：
 - `/r all`：调取并按用户分组排列系统基座内所有人的待办事项。
-- `/r view @李雷`：跨会话精准聚合查看“李雷”的任务明细。
+- `/r view @`：跨会话精准聚合查看“”的任务明细。
 
 ---
 
