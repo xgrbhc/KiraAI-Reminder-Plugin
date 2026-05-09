@@ -46,7 +46,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class ReminderConfig(BaseModel):
     admin_users: List[str] = Field(default_factory=list, description="配置超管账号名或ID列表，拥有跨界管理权限")
-    web_port: int = Field(default=8080, description="Web 大屏服务端口，若被占用将自动递增尝试")
+    web_port: int = Field(default=18080, description="Web 大屏服务端口，若被占用将自动向后递增尝试")
 
     @field_validator("admin_users", mode="before")
     @classmethod
@@ -343,17 +343,22 @@ class ReminderPlugin(BasePlugin):
             except Exception as e:
                 return HTMLResponse(f"<h2 style='color:red;'>[KiraAI] UI 加载失败: {e}</h2>", status_code=500)
 
-        # 端口自动探活：从配置端口开始，最多尝试 10 个端口
+        # 端口自动探活：每次按 10 个端口为一组向后跳跃尝试
         import socket as _socket
         base_port = self.config.web_port
         bound_port = None
-        for _p in range(base_port, base_port + 10):
-            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _s:
-                if _s.connect_ex(("127.0.0.1", _p)) != 0:
-                    bound_port = _p
-                    break
+        port_step = 10
+        max_attempt_groups = 10
+        for group_start in range(base_port, base_port + port_step * max_attempt_groups, port_step):
+            for _p in range(group_start, group_start + port_step):
+                with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _s:
+                    if _s.connect_ex(("127.0.0.1", _p)) != 0:
+                        bound_port = _p
+                        break
+            if bound_port is not None:
+                break
         if bound_port is None:
-            logger.error(f"[Reminder] 端口 {base_port}~{base_port+9} 均被占用，Web 大屏启动失败！")
+            logger.error(f"[Reminder] 端口 {base_port}~{base_port + port_step * max_attempt_groups - 1} 均被占用，Web 大屏启动失败！")
             return
         
         if bound_port != base_port:
