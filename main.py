@@ -617,7 +617,7 @@ class ReminderPlugin(BasePlugin):
         if not text:
             return
 
-        sid = event.session.sid
+        sid = self._get_sid(event)
         
         # --- 读取当前会话已有提醒列表用于下发的卡片绘制或序号映射 ---
         try:
@@ -855,7 +855,7 @@ class ReminderPlugin(BasePlugin):
 
     def _get_sid(self, event: KiraMessageBatchEvent) -> str:
         """获取会话 ID 并校验格式（adapter:type:id）"""
-        sid = getattr(event, "sid", "default")
+        sid = getattr(getattr(event, "session", None), "sid", None) or getattr(event, "sid", "default")
         if sid and sid != "default" and len(sid.split(":")) < 3:
             logger.warning(f"[Reminder] session_id 格式异常: {sid}")
         return sid
