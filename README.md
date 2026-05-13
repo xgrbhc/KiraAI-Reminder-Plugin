@@ -2,7 +2,7 @@
 
 # 🌟 KiraAI Reminder Plugin
 
-**高可用、全功能、智能化的 KiraAI 定时提配生态插件**
+**高可用、全功能、智能化的 KiraAI 定时提醒生态插件**
 
 ![Version](https://img.shields.io/badge/version-v2.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
