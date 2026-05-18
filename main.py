@@ -558,6 +558,41 @@ class ReminderPlugin(BasePlugin):
         except Exception as e:
             logger.warning(f"[Reminder] 添加调度任务失败 job_id={job_id}: {e}")
 
+    async def _publish_immediate_notice(self, session: str, chain: MessageChain):
+        """Publish a reminder notice and force the current session buffer to flush."""
+        cur_time = int(time.time())
+        parts = session.split(":")
+        if len(parts) != 3:
+            raise ValueError(f"Failed to parse session string: {session}")
+
+        adapter_name, session_type, target_id = parts
+        adapter = self.ctx.adapter_mgr.get_adapter(adapter_name)
+        if not adapter:
+            raise ValueError(f"Failed to get adapter: {adapter_name}")
+
+        group = Group(group_id=target_id) if session_type == "gm" else None
+        adapter_config = getattr(adapter, "config", {}) or {}
+        event = KiraMessageEvent(
+            adapter=adapter.info,
+            message_types=adapter.message_types,
+            message=KiraIMMessage(
+                timestamp=cur_time,
+                sender=User(
+                    user_id=target_id if session_type == "dm" else "unknown",
+                    nickname="system",
+                ),
+                group=group,
+                message_id="system_message",
+                self_id=adapter_config.get("self_id"),
+                is_notice=True,
+                is_mentioned=True,
+                chain=chain,
+            ),
+            timestamp=cur_time,
+        )
+        event.flush(force=True)
+        await self.ctx.event_bus.publish(event)
+
     async def _fire_reminder(self, sid: str, r: Dict):
         """提醒触发时发送消息到目标会话，带重试机制与并发写入保护"""
         async with self._fire_semaphore:  # 最多同时 3 个提醒执行，避免竞争写入
@@ -578,7 +613,7 @@ class ReminderPlugin(BasePlugin):
             sent = False
             for attempt in range(1, _FIRE_MAX_RETRIES + 1):
                 try:
-                    await self.ctx.publish_notice(session=sid, chain=chain)
+                    await self._publish_immediate_notice(session=sid, chain=chain)
                     sent = True
                     break
                 except Exception as e:
