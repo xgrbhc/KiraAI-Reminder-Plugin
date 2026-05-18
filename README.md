@@ -4,7 +4,7 @@
 
 **高可用、全功能、智能化的 KiraAI 定时提醒生态插件**
 
-![Version](https://img.shields.io/badge/version-v2.0-blue.svg)
+![Version](https://img.shields.io/badge/version-Latest-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![KiraAI](https://img.shields.io/badge/KiraAI-Plugin-orange.svg)
 
@@ -96,4 +96,4 @@ KiraAI/
 
 该生态插件属于不断演进中的版本，欢迎提出 Issue 或者提交 Pull Request (PR) 来增加新的特性！
 
-<div align="center">Made with ❤️ by KiraAI Team & Community</div>
+<div align="center">Made with ❤️ by xgrbhc & Community</div>
