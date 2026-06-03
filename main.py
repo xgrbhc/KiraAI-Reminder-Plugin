@@ -37,12 +37,19 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from core.plugin import BasePlugin, logger, register_tool, on, Priority
+from core.prompt_manager import Prompt
+from core.provider import LLMRequest
 from core.chat.message_utils import KiraMessageBatchEvent, KiraMessageEvent, KiraIMMessage, MessageChain
 from core.chat.session import User, Group
 from core.chat.message_elements import Notice, Text
 from core.utils.path_utils import get_data_path
 from core.adapter.adapter_utils import IMAdapter
 from pydantic import BaseModel, Field, field_validator
+
+DEFAULT_USAGE_PROMPT = (
+    "你拥有提醒管理能力。参数明确时优先调用 reminder 工具；"
+    "参数不足时先追问；不要编造时间；工具返回后再自然说明结果。"
+)
 
 class ReminderConfig(BaseModel):
     admin_users: List[str] = Field(default_factory=list, description="配置超管账号名或ID列表，拥有跨界管理权限")
@@ -200,6 +207,7 @@ class ReminderPlugin(BasePlugin):
     def __init__(self, ctx, cfg: dict):
         super().__init__(ctx, cfg)
         self.config = ReminderConfig(**cfg)
+        self._default_usage_prompt = self._load_default_usage_prompt()
         data_dir = get_data_path() / "plugin_data" / "reminder_plugin"
         self._storage = ReminderStorage(data_dir / "reminders.json")
         self._scheduler: Optional[AsyncIOScheduler] = None
@@ -248,6 +256,44 @@ class ReminderPlugin(BasePlugin):
         logger.info("[Reminder] 插件已终止")
 
     # ──────── 内部调度辅助 ────────
+
+    @on.llm_request(priority=Priority.HIGH)
+    async def inject_usage_prompt(self, _event: KiraMessageBatchEvent, req: LLMRequest, *_):
+        usage_prompt = self._get_usage_prompt()
+        if not usage_prompt:
+            return
+
+        prompt = Prompt(
+            usage_prompt,
+            name="reminder_usage_prompt",
+            source="reminder_plugin",
+        )
+        self._insert_prompt_after(req.system_prompt, prompt, after_name="output")
+
+    @staticmethod
+    def _insert_prompt_after(prompts: list[Prompt], prompt: Prompt, after_name: str):
+        for idx, item in enumerate(prompts):
+            if isinstance(item, Prompt) and item.name == after_name:
+                prompts.insert(idx + 1, prompt)
+                return
+        prompts.append(prompt)
+
+    def _get_usage_prompt(self) -> str:
+        cfg = self.plugin_cfg if isinstance(self.plugin_cfg, dict) else {}
+        if "usage_prompt" in cfg:
+            return str(cfg.get("usage_prompt") or "").strip()
+        return str(getattr(self, "_default_usage_prompt", DEFAULT_USAGE_PROMPT) or "").strip()
+
+    @staticmethod
+    def _load_default_usage_prompt() -> str:
+        schema_path = Path(__file__).with_name("schema.json")
+        try:
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+            usage_prompt = schema.get("usage_prompt", {}).get("default")
+        except Exception as e:
+            logger.warning(f"[Reminder] 读取默认 LLM 使用提示词失败: {e}")
+            usage_prompt = None
+        return str(usage_prompt or DEFAULT_USAGE_PROMPT).strip()
 
     def _init_fastapi(self):
         """挂载独立的 FastAPI 高性能子节点"""
