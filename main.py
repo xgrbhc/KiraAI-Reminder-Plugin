@@ -47,17 +47,21 @@ from core.adapter.adapter_utils import IMAdapter
 from pydantic import BaseModel, Field, field_validator
 
 DEFAULT_USAGE_PROMPT = (
-    "你拥有提醒管理能力。参数明确时优先调用 reminder 工具；"
-    "参数不足时先追问；不要编造时间；工具返回后再自然说明结果。"
+    "你拥有提醒、待办和任务编排能力。只有当前发言人明确请求时才创建提醒；"
+    "不要替群聊中的其他成员创建提醒，除非当前发言人是管理员。"
+    "参数不足时先追问，不要编造时间。action 是高风险自动动作字段，只有管理员明确要求时才填写。"
+    "工具返回权限不足、时间格式错误或其他失败时，如实告诉用户原因。"
 )
 
 class ReminderConfig(BaseModel):
     admin_users: List[str] = Field(default_factory=list, description="配置超管账号名或ID列表，拥有跨界管理权限")
+    authorized_users: List[str] = Field(default_factory=list, description="额外允许在群聊中创建提醒的用户ID列表")
+    group_create_policy: str = Field(default="admin_only", description="群聊创建提醒策略：admin_only 或 mentioned_user")
     web_port: int = Field(default=18080, description="Web 大屏服务端口，若被占用将自动向后递增尝试")
 
-    @field_validator("admin_users", mode="before")
+    @field_validator("admin_users", "authorized_users", mode="before")
     @classmethod
-    def parse_admin_users(cls, v):
+    def parse_user_list(cls, v):
         if not v:
             return []
         
@@ -77,6 +81,14 @@ class ReminderConfig(BaseModel):
             res.append(str(v))
             
         return res
+
+    @field_validator("group_create_policy", mode="before")
+    @classmethod
+    def normalize_group_create_policy(cls, v):
+        value = str(v or "admin_only").strip()
+        if value not in ("admin_only", "mentioned_user"):
+            return "admin_only"
+        return value
 
 try:
     from fastapi import FastAPI, HTTPException
@@ -433,11 +445,11 @@ class ReminderPlugin(BasePlugin):
                     ips.append(ip)
             
             ip_logs = " | ".join([f"http://{ip}:{bound_port}/web" for ip in ips])
-            logger.info(f"[Reminder] ✅ Web 大屏已启动！本机访问：http://127.0.0.1:{bound_port}/web")
+            logger.info(f"[Reminder] ✅ 插件 Web UI已启动！本机访问：http://127.0.0.1:{bound_port}/web")
             if ip_logs:
                 logger.info(f"[Reminder] 🌐 局域网跨设备访问：{ip_logs}")
         except Exception:
-            logger.info(f"[Reminder] ✅ Web 大屏已启动！访问：http://127.0.0.1:{bound_port}/web")
+            logger.info(f"[Reminder] ✅ 插件 Web UI已启动！访问：http://127.0.0.1:{bound_port}/web")
 
     async def _migrate_legacy_data(self):
         """升级旧版本数据结构，注入 creator_id、creator_name 等"""
@@ -505,6 +517,61 @@ class ReminderPlugin(BasePlugin):
         if current_id == "web_admin_superuser" or current_id in self.config.admin_users:
             return True
         return False
+
+    def _is_group_event(self, event) -> bool:
+        try:
+            is_group_message = getattr(event, "is_group_message", None)
+            if callable(is_group_message):
+                return bool(is_group_message())
+        except Exception:
+            pass
+
+        sid = getattr(event, "sid", "") or getattr(getattr(event, "session", None), "sid", "")
+        if sid:
+            return ":gm:" in sid
+
+        try:
+            if hasattr(event, "message") and getattr(event.message, "group", None) is not None:
+                return True
+            messages = getattr(event, "messages", None)
+            if messages:
+                return getattr(messages[-1], "group", None) is not None
+        except Exception:
+            pass
+        return False
+
+    def _is_event_mentioned(self, event) -> bool:
+        mentioned = getattr(event, "is_mentioned", None)
+        if mentioned is not None:
+            return bool(mentioned)
+
+        try:
+            messages = getattr(event, "messages", None)
+            if messages:
+                return bool(getattr(messages[-1], "is_mentioned", False))
+        except Exception:
+            pass
+        return False
+
+    def _is_authorized_user(self, event) -> bool:
+        current_id = self._get_creator_info(event).get("creator_id", "")
+        return current_id in self.config.authorized_users
+
+    def _check_create_permission(self, event) -> tuple[bool, str]:
+        if not self._is_group_event(event):
+            return True, ""
+        if self._is_admin_user(event) or self._is_authorized_user(event):
+            return True, ""
+        if self.config.group_create_policy == "mentioned_user" and self._is_event_mentioned(event):
+            return True, ""
+        return False, "❌ 权限拒绝：当前群聊仅管理员或授权用户可以创建提醒。"
+
+    def _check_action_permission(self, event, action: Optional[str]) -> tuple[bool, str]:
+        if not action:
+            return True, ""
+        if self._is_admin_user(event):
+            return True, ""
+        return False, "❌ 权限拒绝：自动动作 action 只能由管理员设置。"
 
     async def _health_check_loop(self):
         """定期检查调度器状态，异常时自动重启"""
@@ -696,6 +763,8 @@ class ReminderPlugin(BasePlugin):
         # 提取纯文本
         text = " ".join([m.text.strip() for m in event.message.chain if isinstance(m, Text)]).strip()
         if not text:
+            return
+        if self._is_group_event(event) and not self._is_event_mentioned(event):
             return
 
         sid = self._get_sid(event)
@@ -921,8 +990,7 @@ class ReminderPlugin(BasePlugin):
                 try:
                     if "-" in time_str and ":" in time_str:
                         res = await self.set_reminder(event, content=content, time=time_str)
-                        success_msg = f"已添加: {content}\n[{time_str}]"
-                        await self.ctx.message_processor.send_message_chain(session=sid, chain=MessageChain([Text(success_msg)]))
+                        await self.ctx.message_processor.send_message_chain(session=sid, chain=MessageChain([Text(res)]))
                     else:
                         await self.ctx.message_processor.send_message_chain(session=sid, chain=MessageChain([Text("时间格式需为 YYYY-MM-DD HH:MM")]))
                 except Exception as e:
@@ -966,8 +1034,9 @@ class ReminderPlugin(BasePlugin):
     @register_tool(
         name="set_reminder",
         description=(
-            "设置提醒。支持一次性/重复/间隔/随机时间提醒。"
-            "time 必须为 'YYYY-MM-DD HH:MM' 格式。成功后返回 job_id 供后续管理使用。"
+            "为当前发言人设置提醒。支持一次性、重复、间隔和随机时间提醒。"
+            "time 必须为 'YYYY-MM-DD HH:MM' 格式。群聊创建会按插件权限策略校验，权限不足时会拒绝。"
+            "不要替其他群成员创建提醒，除非当前发言人是管理员。action 仅管理员可设置。"
         ),
         params={
             "type": "object",
@@ -980,7 +1049,7 @@ class ReminderPlugin(BasePlugin):
                 "interval_minutes": {"type": "integer",
                                      "description": "间隔提醒的分钟数（repeat=interval 时必填）"},
                 "category": {"type": "string", "description": "提醒分类（如工作/学习等）"},
-                "action": {"type": "string", "description": "触发时期望执行的动作指令，可借此调用其他工具"},
+                "action": {"type": "string", "description": "触发时期望执行的动作指令；高风险字段，仅管理员可设置"},
                 "time_range_end": {"type": "string",
                                    "description": "随机提醒结束时间，设置后在 time~time_range_end 内随机触发"},
                 "random_count": {"type": "integer", "description": "随机提醒次数（固定值）"},
@@ -998,6 +1067,12 @@ class ReminderPlugin(BasePlugin):
                            random_count_min: Optional[int] = None,
                            random_count_max: Optional[int] = None, **kwargs) -> str:
         try:
+            allowed, reason = self._check_create_permission(event)
+            if not allowed:
+                return reason
+            allowed, reason = self._check_action_permission(event, action)
+            if not allowed:
+                return reason
             if repeat not in ("none", "daily", "weekly", "monthly", "yearly", "interval"):
                 return "❌ repeat 参数无效"
             if repeat == "interval":
@@ -1343,7 +1418,7 @@ class ReminderPlugin(BasePlugin):
                 "repeat": {"type": "string", "enum": ["none", "daily", "weekly", "monthly", "yearly", "interval"], "description": "新重复类型（可选）"},
                 "interval_minutes": {"type": "integer", "description": "新间隔分钟数（可选）"},
                 "category": {"type": "string", "description": "新提醒分类（可选）"},
-                "action": {"type": "string", "description": "新自动动作指令（可选）"},
+                "action": {"type": "string", "description": "新自动动作指令（可选）；高风险字段，仅管理员可设置"},
             },
             "required": ["job_id"],
         }
@@ -1373,6 +1448,9 @@ class ReminderPlugin(BasePlugin):
                 r = reminders[r_index]
                 if not self._check_permission(event, r):
                     return f"❌ 权限拒绝：您无权操作该任务 (创建人: {r.get('creator_name', '未知')})"
+                allowed, reason = self._check_action_permission(event, action)
+                if not allowed:
+                    return reason
                     
                 if r.get("is_random"):
                     return "不支持修改随机批次提醒"
