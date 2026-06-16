@@ -36,7 +36,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from core.plugin import BasePlugin, logger, register_tool, on, Priority
+from core.plugin import BasePlugin, logger, register_tool, on, Priority, register, PluginPage, PageMenu
 from core.prompt_manager import Prompt
 from core.provider import LLMRequest
 from core.chat.message_utils import KiraMessageBatchEvent, KiraMessageEvent, KiraIMMessage, MessageChain
@@ -45,19 +45,19 @@ from core.chat.message_elements import Notice, Text
 from core.utils.path_utils import get_data_path
 from core.adapter.adapter_utils import IMAdapter
 from pydantic import BaseModel, Field, field_validator
+from urllib.parse import unquote
 
 DEFAULT_USAGE_PROMPT = (
-    "你拥有提醒、待办和任务编排能力。只有当前发言人明确请求时才创建提醒；"
-    "不要替群聊中的其他成员创建提醒，除非当前发言人是管理员。"
-    "参数不足时先追问，不要编造时间。action 是高风险自动动作字段，只有管理员明确要求时才填写。"
-    "工具返回权限不足、时间格式错误或其他失败时，如实告诉用户原因。"
+    "你拥有时间驱动的提醒、待办和任务编排能力。可以计划未来、保存任务、"
+    "到点主动行动、周期执行、随机触发并根据上下文调整任务。不要机械追问所有细节；"
+    "当时间和任务可从上下文可靠确定时直接调用工具，只有关键参数不清、可能打扰或存在安全风险时才追问。"
+    "群聊中遵守权限和防骚扰边界；action 仅管理员明确授权时填写。工具失败时必须如实说明原因。"
 )
 
 class ReminderConfig(BaseModel):
     admin_users: List[str] = Field(default_factory=list, description="配置超管账号名或ID列表，拥有跨界管理权限")
     authorized_users: List[str] = Field(default_factory=list, description="额外允许在群聊中创建提醒的用户ID列表")
     group_create_policy: str = Field(default="admin_only", description="群聊创建提醒策略：admin_only 或 mentioned_user")
-    web_port: int = Field(default=18080, description="Web 大屏服务端口，若被占用将自动向后递增尝试")
 
     @field_validator("admin_users", "authorized_users", mode="before")
     @classmethod
@@ -89,15 +89,6 @@ class ReminderConfig(BaseModel):
         if value not in ("admin_only", "mentioned_user"):
             return "admin_only"
         return value
-
-try:
-    from fastapi import FastAPI, HTTPException
-    from fastapi.responses import HTMLResponse, JSONResponse
-    from fastapi.middleware.cors import CORSMiddleware
-    import uvicorn
-    HAS_FASTAPI = True
-except ImportError:
-    HAS_FASTAPI = False
 
 # ========== 全局常量 ==========
 _CONFIRM_TTL = 300  # 确认令牌有效期（秒）
@@ -227,9 +218,6 @@ class ReminderPlugin(BasePlugin):
         self._pending: Dict[str, Any] = {}
         self._health_task: Optional[asyncio.Task] = None
         self._fire_semaphore = asyncio.Semaphore(3)  # 最多同时 3 个提醒触发写入并发
-        
-        self._uvicorn_server: Optional[Any] = None
-        self._fastapi_task: Optional[asyncio.Task] = None
 
     async def initialize(self):
         await self._migrate_legacy_data()
@@ -240,9 +228,6 @@ class ReminderPlugin(BasePlugin):
         # 启动健康检查后台协程
         self._health_task = asyncio.get_event_loop().create_task(self._health_check_loop())
         logger.info("[Reminder] 插件初始化完成，调度器与健康检查已启动")
-        
-        if HAS_FASTAPI:
-            self._init_fastapi()
 
     async def terminate(self):
         # 取消健康检查
@@ -254,17 +239,7 @@ class ReminderPlugin(BasePlugin):
             self._scheduler.shutdown(wait=False)
         # 清空待确认缓存
         self._pending.clear()
-        
-        if HAS_FASTAPI and self._uvicorn_server:
-            logger.info("[Reminder] 正在关闭前端 Web Dashboard 微服务...")
-            self._uvicorn_server.should_exit = True
-            if self._fastapi_task and not self._fastapi_task.done():
-                try:
-                    import asyncio
-                    await asyncio.wait_for(self._fastapi_task, timeout=2.0)
-                except Exception:
-                    self._fastapi_task.cancel()
-        
+
         logger.info("[Reminder] 插件已终止")
 
     # ──────── 内部调度辅助 ────────
@@ -307,149 +282,112 @@ class ReminderPlugin(BasePlugin):
             usage_prompt = None
         return str(usage_prompt or DEFAULT_USAGE_PROMPT).strip()
 
-    def _init_fastapi(self):
-        """挂载独立的 FastAPI 高性能子节点"""
-        app = FastAPI(title="KiraAI Reminder Web Dashboard")
-        
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+    @register.page(
+        "/dashboard",
+        menu=PageMenu(
+            label={"zh": "提醒", "en": "Reminders"},
+            icon="Document",
+            order=20,
+        ),
+    )
+    def dashboard(self):
+        return PluginPage.from_folder("./web")
 
-        @app.get("/api/sessions")
-        async def api_get_sessions():
-            try:
-                data = await self._storage.load()
-                # 仅发送包含数据的基站，并提取基站内的活跃跨界用户树 (User Tree)
-                sessions = []
-                for k, v in data.items():
-                    if len(v) > 0:
-                        creators = {}
-                        for r in v:
-                            uid = r.get("creator_id", "unknown")
-                            uname = r.get("creator_name", "未知")
-                            # 合并并以新名称为主
-                            if uid not in creators:
-                                creators[uid] = uname
-                            elif creators[uid] in ("未知", "legacy_user") and uname not in ("未知", "legacy_user"):
-                                creators[uid] = uname
-                        
-                        users_list = [{"id": uid, "name": uname} for uid, uname in creators.items()]
-                        sessions.append({"id": k, "count": len(v), "users": users_list})
-                        
-                return JSONResponse({"status": "ok", "data": sessions})
-            except Exception as e:
-                return JSONResponse({"status": "error", "msg": str(e)}, status_code=500)
-
-        @app.get("/api/reminders/{session_id}")
-        async def api_get_reminders(session_id: str):
-            try:
-                # 兼容前端传递 uri encoded 字符
-                from urllib.parse import unquote
-                sid = unquote(session_id)
-                data = await self._storage.load()
-                reminders = data.get(sid, [])
-                return JSONResponse({"status": "ok", "data": reminders})
-            except Exception as e:
-                return JSONResponse({"status": "error", "msg": str(e)}, status_code=500)
-
-        @app.post("/api/reminders/{action}")
-        async def api_action_reminders(action: str, payload: dict):
-            sid = payload.get("session_id")
-            job_id = payload.get("job_id")
-            uid = payload.get("user_id", "web_admin_superuser")
-            force = payload.get("force", True) # Web端默认赋予强行覆盖权限
-            
-            if not sid or not job_id:
-                raise HTTPException(status_code=400, detail="缺少必要参数")
-
-            # 模拟事件结构以复用现有的最强原生鉴权体系
-            class DummyWebEvent:
-                class DummySender:
-                    def __init__(self, _uid):
-                        self.user_id = _uid
-                        self.nickname = "Web UI 用户"
-                class DummyMsg:
-                    def __init__(self, _uid):
-                        self.sender = DummyWebEvent.DummySender(_uid)
-                def __init__(self, _sid, _uid):
-                    self.sid = _sid
-                    self.message = DummyWebEvent.DummyMsg(_uid)
-
-            fake_event = DummyWebEvent(sid, uid)
-
-            if action == "delete":
-                res = await self.delete_reminder(fake_event, job_id=job_id, force=force)
-                return {"status": "ok" if ("❌" not in res and "拒绝" not in res) else "error", "msg": res}
-            elif action == "pause":
-                res = await self.pause_reminder(fake_event, job_id=job_id)
-                return {"status": "ok" if ("❌" not in res and "拒绝" not in res) else "error", "msg": res}
-            elif action == "resume":
-                res = await self.resume_reminder(fake_event, job_id=job_id)
-                return {"status": "ok" if ("❌" not in res and "拒绝" not in res) else "error", "msg": res}
-            else:
-                raise HTTPException(status_code=400, detail="无效动作")
-
-        @app.get("/web")
-        async def api_dashboard_ui():
-            try:
-                html_path = Path(__file__).parent / "index.html"
-                content = html_path.read_text(encoding="utf-8")
-                return HTMLResponse(content)
-            except Exception as e:
-                return HTMLResponse(f"<h2 style='color:red;'>[KiraAI] UI 加载失败: {e}</h2>", status_code=500)
-
-        # 端口自动探活：每次按 10 个端口为一组向后跳跃尝试
-        import socket as _socket
-        base_port = self.config.web_port
-        bound_port = None
-        port_step = 10
-        max_attempt_groups = 10
-        for group_start in range(base_port, base_port + port_step * max_attempt_groups, port_step):
-            for _p in range(group_start, group_start + port_step):
-                with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _s:
-                    if _s.connect_ex(("127.0.0.1", _p)) != 0:
-                        bound_port = _p
-                        break
-            if bound_port is not None:
-                break
-        if bound_port is None:
-            logger.error(f"[Reminder] 端口 {base_port}~{base_port + port_step * max_attempt_groups - 1} 均被占用，Web 大屏启动失败！")
-            return
-        
-        if bound_port != base_port:
-            logger.warning(f"[Reminder] 端口 {base_port} 已被占用，自动切换至 {bound_port}")
-
-        config = uvicorn.Config(app, host="0.0.0.0", port=bound_port, log_level="warning")
-        self._uvicorn_server = uvicorn.Server(config)
-        
-        async def _run_uvicorn():
-            try:
-                await self._uvicorn_server.serve()
-            except asyncio.CancelledError:
-                pass
-                
-        self._fastapi_task = asyncio.get_event_loop().create_task(_run_uvicorn())
-        
-        # 打印本机所有局域网 IP 入口（含实际绑定端口）
+    @register.api("GET", "/sessions")
+    async def api_get_sessions(self):
         try:
-            import socket
-            hostname = socket.gethostname()
-            addr_info = socket.getaddrinfo(hostname, None, socket.AF_INET)
-            ips = []
-            for item in addr_info:
-                ip = item[4][0]
-                if ip not in ips and not ip.startswith("127."):
-                    ips.append(ip)
-            
-            ip_logs = " | ".join([f"http://{ip}:{bound_port}/web" for ip in ips])
-            logger.info(f"[Reminder] ✅ 插件 Web UI已启动！本机访问：http://127.0.0.1:{bound_port}/web")
-            if ip_logs:
-                logger.info(f"[Reminder] 🌐 局域网跨设备访问：{ip_logs}")
-        except Exception:
-            logger.info(f"[Reminder] ✅ 插件 Web UI已启动！访问：http://127.0.0.1:{bound_port}/web")
+            data = await self._storage.load()
+            sessions = []
+            for k, v in data.items():
+                if len(v) > 0:
+                    creators = {}
+                    for r in v:
+                        uid = r.get("creator_id", "unknown")
+                        uname = r.get("creator_name", "未知")
+                        if uid not in creators:
+                            creators[uid] = uname
+                        elif creators[uid] in ("未知", "legacy_user") and uname not in ("未知", "legacy_user"):
+                            creators[uid] = uname
+
+                    users_list = [{"id": uid, "name": uname} for uid, uname in creators.items()]
+                    sessions.append({"id": k, "count": len(v), "users": users_list})
+
+            return {"status": "ok", "data": sessions}
+        except Exception as e:
+            logger.error(f"[Reminder] WebUI 获取会话列表失败: {e}")
+            return {"status": "error", "msg": str(e)}
+
+    @register.api("GET", "/reminders/{session_id}")
+    async def api_get_reminders(self, session_id: str):
+        try:
+            sid = unquote(session_id)
+            data = await self._storage.load()
+            reminders = data.get(sid, [])
+            return {"status": "ok", "data": reminders}
+        except Exception as e:
+            logger.error(f"[Reminder] WebUI 获取提醒列表失败: {e}")
+            return {"status": "error", "msg": str(e)}
+
+    @register.api("POST", "/reminders/confirm-delete")
+    async def api_confirm_delete_reminder(self, payload: dict):
+        confirm_token = str(payload.get("confirm_token") or "").strip()
+        if not confirm_token:
+            return {"status": "error", "msg": "缺少确认令牌"}
+
+        uid = payload.get("user_id", "web_admin_superuser")
+        sid = payload.get("session_id") or "webui:dm:web_admin_superuser"
+        fake_event = self._build_web_event(str(sid), str(uid))
+        res = await self.confirm_delete_reminder(fake_event, confirm_token=confirm_token)
+        return {"status": "ok" if self._is_web_action_success(res) else "error", "msg": res}
+
+    @register.api("POST", "/reminders/{action}")
+    async def api_action_reminders(self, action: str, payload: dict):
+        sid = payload.get("session_id")
+        job_id = payload.get("job_id")
+        uid = payload.get("user_id", "web_admin_superuser")
+        force = payload.get("force", True)
+
+        if not sid or not job_id:
+            return {"status": "error", "msg": "缺少必要参数"}
+
+        fake_event = self._build_web_event(str(sid), str(uid))
+
+        if action == "delete":
+            res = await self.delete_reminder(fake_event, job_id=job_id, force=force)
+        elif action == "pause":
+            res = await self.pause_reminder(fake_event, job_id=job_id)
+        elif action == "resume":
+            res = await self.resume_reminder(fake_event, job_id=job_id)
+        else:
+            return {"status": "error", "msg": "无效动作"}
+
+        return {"status": "ok" if self._is_web_action_success(res) else "error", "msg": res}
+
+    @staticmethod
+    def _build_web_event(sid: str, uid: str = "web_admin_superuser"):
+        class DummyWebEvent:
+            class DummySender:
+                def __init__(self, _uid):
+                    self.user_id = _uid
+                    self.nickname = "Web UI 用户"
+
+            class DummyMsg:
+                def __init__(self, _uid):
+                    self.sender = DummyWebEvent.DummySender(_uid)
+
+            def __init__(self, _sid, _uid):
+                self.sid = _sid
+                self.message = DummyWebEvent.DummyMsg(_uid)
+
+        return DummyWebEvent(sid, uid)
+
+    @staticmethod
+    def _is_web_action_success(result: str) -> bool:
+        error_markers = (
+            "❌", "拒绝", "出错", "错误", "找不到", "无效", "缺少",
+            "无法", "不支持", "请确认删除令牌", "重要提醒",
+        )
+        return not any(marker in result for marker in error_markers)
 
     async def _migrate_legacy_data(self):
         """升级旧版本数据结构，注入 creator_id、creator_name 等"""

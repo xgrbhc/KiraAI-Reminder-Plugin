@@ -4,7 +4,7 @@
 
 **高可用、全功能、智能化的 KiraAI 定时提醒生态插件**
 
-![Version](https://img.shields.io/badge/version-Latest-blue.svg)
+![Version](https://img.shields.io/badge/version-v2.0.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![KiraAI](https://img.shields.io/badge/KiraAI-Plugin-orange.svg)
 
@@ -23,7 +23,7 @@
 
 - 📅 **多维时间引擎**：支持 `精准定时`、`周期循环` (每天/周/月/年)、`间隔触发` (每N分钟)。
 - 🎲 **拟真随机延时**：指定时间段内触发 N 次随机提醒，让 AI 带有“人性化”的不可预测感。
-- 🌐 **独立 Web 看板微服务**：内置 FastAPI 驱动的高性能看板（默认 `18080`），可跨设备、跨局域网监控项目全体成员进度。
+- 🌐 **主 WebUI 侧边栏看板**：基于 KiraAI `v2.23.0` 插件页面注册能力，入口为主 WebUI 左侧 `提醒 / Reminders`，统一走主 WebUI 认证与插件 API。
 - ⚡ **无延迟极速指令**：内置类 CLI 命令解析器（如 `/r add`），绕过 LLM 思考过程，毫秒级响应您的增删改查。
 - 🛡️ **防误删与越权保护**：
   - 全局超管（上帝视角）可指令级透视全域用户数据 `/r all`。
@@ -46,15 +46,37 @@ KiraAI/
                 ├── main.py
                 ├── schema.json
                 ├── manifest.json
-                └── index.html
+                ├── requirements.txt
+                └── web/
+                     └── index.html
 ```
 
 ### 2. 参数选配 (schema.json)
 重启节点或在管理面加载本插件后，可配置以下进阶项：
 - `admin_users`：超级管理员账号/QQ 数组录入。
-- `web_port`：WebUI 监控运行端口（默认为 `18080`，遇冲突时会按 10 个端口为一组向后跳跃寻找可用端口）。
+- `authorized_users`：额外允许在群聊中创建提醒的用户账号/ID 数组。
+- `group_create_policy`：群聊提醒创建策略，可选 `admin_only` 或 `mentioned_user`。
+- `usage_prompt`：注入 LLM 请求的插件使用提示词，用于指导模型何时调用提醒工具。
 
-### 3. 依赖
+### 3. WebUI 入口
+
+本插件从 `v2.0.0` 起依赖 KiraAI `v2.23.0` 新增的插件 WebUI 页面注册能力，`manifest.json` 已设置：
+
+```json
+"core_version": ">=2.23.0"
+```
+
+安装并重启 KiraAI 后，可在主 WebUI 左侧侧边栏进入：`提醒 / Reminders`。
+
+对应页面与接口路径：
+
+- 页面入口：`/plugin-page/reminder_plugin/dashboard`
+- 插件页面服务：`/page/plugin/reminder_plugin/dashboard`
+- 插件 API：`/api/plugin/reminder_plugin/...`
+
+旧版独立入口 `http://127.0.0.1:18080/web`、独立 `uvicorn` 服务和 `web_port` 配置已移除。
+
+### 4. 依赖
 插件分发或在干净环境安装时，请一并安装 `requirements.txt` 中的依赖：
 
 - `APScheduler>=3.10,<4`

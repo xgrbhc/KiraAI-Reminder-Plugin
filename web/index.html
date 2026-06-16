@@ -298,6 +298,7 @@
                 const loading = ref(false)
                 const reminders = ref([])
                 const toasts = ref([])
+                const pluginContext = ref(null)
                 
                 // Form state
                 const sessionId = ref('') 
@@ -354,6 +355,13 @@
                     }, 4000)
                 }
 
+                const pluginApi = () => {
+                    if (!window.PluginPageContext || !pluginContext.value) {
+                        throw new Error('PluginPageContext 尚未就绪')
+                    }
+                    return window.PluginPageContext.api
+                }
+
                 const fetchReminders = async () => {
                     showSessionDropdown.value = false
                     
@@ -363,8 +371,7 @@
                     }
                     loading.value = true
                     try {
-                        const res = await fetch(`/api/reminders/${encodeURIComponent(sessionId.value)}?_t=${Date.now()}`)
-                        const data = await res.json()
+                        const data = await pluginApi().get(`reminders/${encodeURIComponent(sessionId.value)}`, { _t: Date.now() })
                         if (data.status === 'ok') {
                             reminders.value = data.data
                         } else {
@@ -381,16 +388,11 @@
 
                 const doAction = async (action, jobId, force = true) => {
                     try {
-                        const res = await fetch(`/api/reminders/${action}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                session_id: sessionId.value,
-                                job_id: jobId,
-                                force: force
-                            })
+                        const data = await pluginApi().post(`reminders/${action}`, {
+                            session_id: sessionId.value,
+                            job_id: jobId,
+                            force: force
                         })
-                        const data = await res.json()
                         if (data.status === 'ok') {
                             showToast('指令下达成功', data.msg)
                             await fetchReminders() // reload 
@@ -414,15 +416,25 @@
                     showConfirmModal.value = false
                 }
 
-                const confirmDelete = () => {
+                const confirmDelete = async () => {
                     if (!deleteToken.value.trim()) {
                         return showToast('校验失败', '请输入防御解除令牌', 'warning')
                     }
-                    // 通过 API 再次发起包含 token 的动作
-                    // 由于当前 API 不支持发送 token 参数。最好的办法是调用自身或者发送一个伪造 payload 给现有的。
-                    // 鉴于旧版没有传递 token 的通道，我们利用 Web 的 'force: true' 强制删除。
-                    closeModal()
-                    doAction('delete', currentJobId.value, true)
+                    try {
+                        const data = await pluginApi().post('reminders/confirm-delete', {
+                            session_id: sessionId.value,
+                            confirm_token: deleteToken.value.trim()
+                        })
+                        if (data.status === 'ok') {
+                            closeModal()
+                            showToast('确认成功', data.msg)
+                            await fetchReminders()
+                        } else {
+                            showToast('令牌校验失败', data.msg, 'error')
+                        }
+                    } catch (e) {
+                        showToast('网络波动', e.message, 'error')
+                    }
                 }
 
                 const formatRepeat = (repeat, interval) => {
@@ -439,8 +451,7 @@
 
                 const fetchSessions = async () => {
                     try {
-                        const res = await fetch(`/api/sessions?_t=${Date.now()}`)
-                        const data = await res.json()
+                        const data = await pluginApi().get('sessions', { _t: Date.now() })
                         if (data.status === 'ok') {
                             availableSessions.value = data.data
                         }
@@ -450,7 +461,14 @@
                 }
 
                 // Initial fetch
-                onMounted(() => {
+                onMounted(async () => {
+                    if (window.PluginPageContext) {
+                        pluginContext.value = await window.PluginPageContext.ready()
+                    } else {
+                        showToast('上下文缺失', '请从 KiraAI WebUI 侧边栏打开本页面', 'error')
+                        return
+                    }
+
                     fetchSessions()
                     
                     const urlParams = new URLSearchParams(window.location.search)

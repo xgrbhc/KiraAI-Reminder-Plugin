@@ -1,8 +1,20 @@
 {
   "display_name": "Reminder Plugin",
   "plugin_id": "reminder_plugin",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "author": "xgrbhc",
   "description": "智能提醒插件 - 提供个性化的提醒服务，帮助用户高效管理时间和任务。",
-  "repo": "https://github.com/xgrbhc/KiraAI-Reminder-Plugin"
+  "repo": "https://github.com/xgrbhc/KiraAI-Reminder-Plugin",
+  "core_version": ">=2.23.0",
+  "tags": ["reminder", "schedule", "task"],
+  "locales": {
+    "zh": {
+      "display_name": "提醒插件",
+      "description": "提供定时提醒、重复提醒、随机提醒、待办管理和 WebUI 看板。"
+    },
+    "en": {
+      "display_name": "Reminder Plugin",
+      "description": "Provides scheduled reminders, repeating reminders, random reminders, task management, and a WebUI dashboard."
+    }
+  }
 }
