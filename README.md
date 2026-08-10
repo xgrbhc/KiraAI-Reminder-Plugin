@@ -4,7 +4,7 @@
 
 **高可用、全功能、智能化的 KiraAI 定时提醒生态插件**
 
-![Version](https://img.shields.io/badge/version-v2.1.0-blue.svg)
+![Version](https://img.shields.io/badge/version-v2.2.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![KiraAI](https://img.shields.io/badge/KiraAI-Plugin-orange.svg)
 
@@ -23,6 +23,8 @@
 
 - 📅 **多维时间引擎**：支持 `精准定时`、`周期循环` (每天/周/月/年)、`间隔触发` (每N分钟)。
 - 🎲 **拟真随机延时**：指定时间段内触发 N 次随机提醒，让 AI 带有“人性化”的不可预测感。
+- 🧭 **自主意图循环**：支持白名单会话中的每日复盘、低频随机检查、意图状态维护和到期跟进兜底。
+- 🔐 **可信身份与统一 ACL**：区分用户、机器人、系统、Web 管理端和遗留记录；内部事件使用进程级可信信封，不再依赖 `system/unknown` 放行。
 - 🌐 **主 WebUI 侧边栏看板**：基于 KiraAI `v2.23.0` 插件页面注册能力，入口为主 WebUI 左侧 `提醒 / Reminders`，统一走主 WebUI 认证与插件 API。
 - ⚡ **无延迟极速指令**：内置类 CLI 命令解析器（如 `/r add`），绕过 LLM 思考过程，毫秒级响应您的增删改查。
 - 🛡️ **防误删与越权保护**：
@@ -44,11 +46,16 @@ KiraAI/
       └── plugins/
            └── reminder_plugin/
                 ├── main.py
+                ├── identity.py
+                ├── permissions.py
                 ├── schema.json
                 ├── manifest.json
                 ├── requirements.txt
-                └── web/
-                     └── index.html
+                ├── web/
+                │    └── index.html
+                └── tests/
+                     ├── test_identity_permissions.py
+                     └── test_storage_migration.py
 ```
 
 ### 2. 参数选配 (schema.json)
@@ -56,7 +63,13 @@ KiraAI/
 - `admin_users`：超级管理员账号/QQ 数组录入。
 - `authorized_users`：额外允许在群聊中创建提醒的用户账号/ID 数组。
 - `group_create_policy`：群聊提醒创建策略，可选 `admin_only`、`mentioned_user` 或 `all`（all 表示群聊所有成员均可创建，是否合理交由 LLM 行为准则把控）。
-- `usage_prompt`：注入 LLM 请求的插件使用提示词，用于指导模型何时调用提醒工具。
+- `action_policy`：独立的自动动作权限策略，可选 `admin_only`、`admin_and_trusted_bot` 或 `all`；默认不会因为开启群聊 `all` 而同步开放高风险 action。
+- `autonomy_enabled` / `allowed_sessions`：自主意图循环总开关与会话白名单。
+- `advanced_config.autonomy_mode`：可选 `off`、`observe`、`plan_only`、`act_with_confirm`、`trusted_admin`；权限在工具执行层硬校验。
+- `advanced_config.autonomy_allowed_tools`：自主事件工具白名单。非 `trusted_admin` 模式会继续限制为插件自身安全工具。
+- `advanced_config.usage_prompt`：注入 LLM 请求的插件使用提示词，用于指导模型何时调用提醒工具。
+
+升级到 v2.2.0 时，旧提醒会幂等迁移到 identity schema v2。首次迁移前会在插件数据目录生成 `reminders.pre-v2.2.backup.json`；无法恢复所有者的群聊旧记录仅管理员可见和管理。
 
 ### 3. WebUI 入口
 
@@ -86,6 +99,8 @@ KiraAI/
 ## 💻 人类直连快捷指令 (无需 AI 思考)
 
 > 支持多种唤醒前缀：`/r`, `/待办`，或 `-r`
+>
+> 群聊快捷命令始终要求艾特或回复当前机器人，以避免同群多个机器人同时响应；此规则不受 `group_create_policy=all` 影响。
 
 | 操作类型 | 指令示例 | 说明 / 功能 |
 | :--- | :--- | :--- |
@@ -111,6 +126,9 @@ KiraAI/
 - 🛠 `delete_reminder` / `confirm_delete_reminder`：处理带 `令牌二次认证` 的关键节点删除流。
 - 🛠 `mark_reminder_important` / `unmark_reminder_important`：感知到高价值日程自动加注⭐。
 - 🛠 `edit_reminder`：无缝重构现存提醒。
+- 🛠 `list_autonomous_intents` / `create_autonomous_intent`：读取或创建当前会话的自主意图。
+- 🛠 `update_autonomous_intent` / `close_autonomous_intent`：维护、暂停或关闭自主意图。
+- 🛠 `schedule_intent_followup`：以 bot-owned reminder 安排下一次低频自主跟进。
 
 ---
 
