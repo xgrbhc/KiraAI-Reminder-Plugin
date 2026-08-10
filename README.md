@@ -4,7 +4,7 @@
 
 **高可用、全功能、智能化的 KiraAI 定时提醒生态插件**
 
-![Version](https://img.shields.io/badge/version-v2.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-v2.1.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![KiraAI](https://img.shields.io/badge/KiraAI-Plugin-orange.svg)
 
@@ -55,7 +55,7 @@ KiraAI/
 重启节点或在管理面加载本插件后，可配置以下进阶项：
 - `admin_users`：超级管理员账号/QQ 数组录入。
 - `authorized_users`：额外允许在群聊中创建提醒的用户账号/ID 数组。
-- `group_create_policy`：群聊提醒创建策略，可选 `admin_only` 或 `mentioned_user`。
+- `group_create_policy`：群聊提醒创建策略，可选 `admin_only`、`mentioned_user` 或 `all`（all 表示群聊所有成员均可创建，是否合理交由 LLM 行为准则把控）。
 - `usage_prompt`：注入 LLM 请求的插件使用提示词，用于指导模型何时调用提醒工具。
 
 ### 3. WebUI 入口

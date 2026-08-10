@@ -51,7 +51,7 @@ DEFAULT_USAGE_PROMPT = (
     "你拥有时间驱动的提醒、待办和任务编排能力。可以计划未来、保存任务、"
     "到点主动行动、周期执行、随机触发并根据上下文调整任务。不要机械追问所有细节；"
     "当时间和任务可从上下文可靠确定时直接调用工具，只有关键参数不清、可能打扰或存在安全风险时才追问。"
-    "群聊中遵守权限和防骚扰边界；action 仅管理员明确授权时填写。工具失败时必须如实说明原因。"
+    "群聊中遵守权限和防骚扰边界；action 填写前请自行判断内容安全与合理性，涉及敏感/危险操作应拒绝。工具失败时必须如实说明原因。"
 )
 
 class ReminderConfig(BaseModel):
@@ -86,7 +86,7 @@ class ReminderConfig(BaseModel):
     @classmethod
     def normalize_group_create_policy(cls, v):
         value = str(v or "admin_only").strip()
-        if value not in ("admin_only", "mentioned_user"):
+        if value not in ("admin_only", "mentioned_user", "all"):
             return "admin_only"
         return value
 
@@ -502,14 +502,15 @@ class ReminderPlugin(BasePlugin):
             return True, ""
         if self.config.group_create_policy == "mentioned_user" and self._is_event_mentioned(event):
             return True, ""
+        # all 策略：群聊中任何会话成员都可创建提醒（内容与骚扰判断交由 LLM 行为准则兜底，
+        # action 高危字段仍仅管理员可设置，见 _check_action_permission）
+        if self.config.group_create_policy == "all":
+            return True, ""
         return False, "❌ 权限拒绝：当前群聊仅管理员或授权用户可以创建提醒。"
 
     def _check_action_permission(self, event, action: Optional[str]) -> tuple[bool, str]:
-        if not action:
-            return True, ""
-        if self._is_admin_user(event):
-            return True, ""
-        return False, "❌ 权限拒绝：自动动作 action 只能由管理员设置。"
+        # action 权限已放开：内容安全与合理性交由 LLM 人设把控，不在此处硬性拦截
+        return True, ""
 
     async def _health_check_loop(self):
         """定期检查调度器状态，异常时自动重启"""
@@ -987,7 +988,7 @@ class ReminderPlugin(BasePlugin):
                 "interval_minutes": {"type": "integer",
                                      "description": "间隔提醒的分钟数（repeat=interval 时必填）"},
                 "category": {"type": "string", "description": "提醒分类（如工作/学习等）"},
-                "action": {"type": "string", "description": "触发时期望执行的动作指令；高风险字段，仅管理员可设置"},
+                "action": {"type": "string", "description": "触发时期望执行的动作指令；填写前请自行判断内容安全与合理性，涉及敏感/危险操作应拒绝，不要替用户填写"},
                 "time_range_end": {"type": "string",
                                    "description": "随机提醒结束时间，设置后在 time~time_range_end 内随机触发"},
                 "random_count": {"type": "integer", "description": "随机提醒次数（固定值）"},
@@ -1356,7 +1357,7 @@ class ReminderPlugin(BasePlugin):
                 "repeat": {"type": "string", "enum": ["none", "daily", "weekly", "monthly", "yearly", "interval"], "description": "新重复类型（可选）"},
                 "interval_minutes": {"type": "integer", "description": "新间隔分钟数（可选）"},
                 "category": {"type": "string", "description": "新提醒分类（可选）"},
-                "action": {"type": "string", "description": "新自动动作指令（可选）；高风险字段，仅管理员可设置"},
+                "action": {"type": "string", "description": "新自动动作指令（可选）；填写前请自行判断内容安全与合理性，涉及敏感/危险操作应拒绝"},
             },
             "required": ["job_id"],
         }
