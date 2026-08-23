@@ -1,7 +1,7 @@
 {
   "display_name": "Reminder Plugin",
   "plugin_id": "reminder_plugin",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "author": "xgrbhc",
   "description": "智能提醒与自主意图循环插件，提供可信主体鉴权、定时调度和待办管理。",
   "repo": "https://github.com/xgrbhc/KiraAI-Reminder-Plugin",
