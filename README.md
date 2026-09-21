@@ -1,3 +1,5 @@
+
+
 <div align="center">
 
 # 🌟 KiraAI Reminder Plugin
@@ -80,6 +82,8 @@ KiraAI/
 ```
 
 安装并重启 KiraAI 后，可在主 WebUI 左侧侧边栏进入：`提醒 / Reminders`。
+
+`web/index.html` 依赖主 WebUI 注入的 `window.PluginPageContext` 来调用插件 API。
 
 对应页面与接口路径：
 
