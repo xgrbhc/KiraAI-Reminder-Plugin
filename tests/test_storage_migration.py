@@ -1,34 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
-import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from _loader import load_plugin_module
 
-PLUGIN_DIR = Path(__file__).resolve().parents[1]
-PACKAGE_NAME = "reminder_plugin_v22_main_tests"
-
-
-def _load_main_module():
-    package = types.ModuleType(PACKAGE_NAME)
-    package.__path__ = [str(PLUGIN_DIR)]
-    sys.modules[PACKAGE_NAME] = package
-    name = f"{PACKAGE_NAME}.main"
-    spec = importlib.util.spec_from_file_location(name, PLUGIN_DIR / "main.py")
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-main = _load_main_module()
+main = load_plugin_module("main")
 
 
 class StorageMigrationTests(unittest.TestCase):

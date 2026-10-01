@@ -48,14 +48,27 @@ KiraAI/
       └── plugins/
            └── reminder_plugin/
                 ├── main.py
+                ├── config.py
+                ├── models.py
+                ├── storage.py
+                ├── time_utils.py
+                ├── reminder_service.py
+                ├── scheduler.py
+                ├── autonomy.py
                 ├── identity.py
                 ├── permissions.py
                 ├── schema.json
                 ├── manifest.json
                 ├── requirements.txt
                 ├── web/
-                │    └── index.html
+                │    ├── index.html
+                │    ├── app.js
+                │    └── style.css
                 └── tests/
+                     ├── test_contracts.py
+                     ├── test_reminder_service.py
+                     ├── test_scheduler.py
+                     ├── test_autonomy.py
                      ├── test_identity_permissions.py
                      └── test_storage_migration.py
 ```
@@ -83,7 +96,7 @@ KiraAI/
 
 安装并重启 KiraAI 后，可在主 WebUI 左侧侧边栏进入：`提醒 / Reminders`。
 
-`web/index.html` 依赖主 WebUI 注入的 `window.PluginPageContext` 来调用插件 API。
+`web/index.html` 从同目录加载 `app.js` 和 `style.css`；`app.js` 仍使用主 WebUI 注入的 `window.PluginPageContext` 调用插件 API。页面资源不需要额外注册静态路由。
 
 对应页面与接口路径：
 

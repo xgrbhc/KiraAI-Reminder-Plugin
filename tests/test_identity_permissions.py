@@ -1,36 +1,13 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
-import types
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 
-PLUGIN_DIR = Path(__file__).resolve().parents[1]
-PACKAGE_NAME = "reminder_plugin_v22_tests"
+from _loader import load_plugin_module
 
 
-def _load_module(name: str):
-    package = sys.modules.get(PACKAGE_NAME)
-    if package is None:
-        package = types.ModuleType(PACKAGE_NAME)
-        package.__path__ = [str(PLUGIN_DIR)]
-        sys.modules[PACKAGE_NAME] = package
-    qualified_name = f"{PACKAGE_NAME}.{name}"
-    module = sys.modules.get(qualified_name)
-    if module is not None:
-        return module
-    spec = importlib.util.spec_from_file_location(qualified_name, PLUGIN_DIR / f"{name}.py")
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[qualified_name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-identity = _load_module("identity")
-permissions = _load_module("permissions")
+identity = load_plugin_module("identity")
+permissions = load_plugin_module("permissions")
 
 EventOrigin = identity.EventOrigin
 IdentityResolver = identity.IdentityResolver
