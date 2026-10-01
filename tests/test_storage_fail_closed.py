@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from conftest import attach_delivery
+
 
 def storage_error_type(reminder_main):
     storage_module = sys.modules[reminder_main.ReminderStorage.__module__]
@@ -86,6 +88,7 @@ def test_restore_does_not_overwrite_corrupt_reminders(reminder_main, tmp_path: P
         path.write_bytes(b"{corrupt")
         plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
         plugin._storage = reminder_main.ReminderStorage(path)
+        attach_delivery(plugin, reminder_main, tmp_path)
         plugin._scheduler = None
 
         with pytest.raises(storage_error_type(reminder_main)):
@@ -142,6 +145,7 @@ def test_failed_autonomy_load_shuts_down_started_scheduler(
         monkeypatch.setattr(reminder_main, "AsyncIOScheduler", lambda: scheduler)
         plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
         plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
+        attach_delivery(plugin, reminder_main, tmp_path)
         bad_state = tmp_path / "autonomous_state.json"
         bad_state.write_bytes(b"{broken")
         plugin._autonomy_storage = reminder_main.ReminderStorage(bad_state)

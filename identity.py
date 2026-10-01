@@ -60,6 +60,7 @@ class PrincipalContext:
     capabilities: frozenset[str] = field(default_factory=frozenset)
     trusted: bool = False
     delegated_owner_id: str = ""
+    delivery_id: str = ""
 
     @property
     def is_autonomy_event(self) -> bool:
@@ -165,6 +166,7 @@ class IdentityResolver:
         principal_id: str,
         capabilities: Iterable[str] = (),
         delegated_owner_id: str = "",
+        delivery_id: str = "",
     ) -> dict[str, dict[str, Any]]:
         return {
             ENVELOPE_NAMESPACE: {
@@ -172,6 +174,7 @@ class IdentityResolver:
                 "principal_kind": principal_kind.value,
                 "principal_id": str(principal_id),
                 "delegated_owner_id": str(delegated_owner_id or ""),
+                "delivery_id": str(delivery_id or ""),
                 "capabilities": sorted({str(item) for item in capabilities if str(item)}),
                 "nonce": self._process_secret,
             }
@@ -209,6 +212,7 @@ class IdentityResolver:
                     capabilities=frozenset(str(item) for item in capabilities if str(item)),
                     trusted=True,
                     delegated_owner_id=str(payload.get("delegated_owner_id") or ""),
+                    delivery_id=str(payload.get("delivery_id") or ""),
                 )
 
         user_id, nickname = _event_sender(messages)

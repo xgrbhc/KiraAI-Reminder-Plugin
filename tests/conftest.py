@@ -20,3 +20,9 @@ if Path.cwd() == PLUGIN_DIR:
 @pytest.fixture(scope="session")
 def reminder_main():
     return load_plugin_module("main")
+
+
+def attach_delivery(plugin, reminder_main, tmp_path: Path):
+    plugin._delivery_storage = reminder_main.ReminderStorage(tmp_path / "delivery_state.json")
+    plugin._delivery = reminder_main.DeliveryTracker(plugin._delivery_storage, plugin._storage)
+    return plugin

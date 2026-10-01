@@ -18,7 +18,7 @@ from urllib.parse import unquote
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from core.plugin import BasePlugin, logger, register_tool, on, Priority, register, PluginPage, PageMenu
 from core.prompt_manager import Prompt
-from core.provider import LLMRequest
+from core.provider import LLMRequest, LLMResponse
 from core.chat.message_utils import KiraMessageBatchEvent, KiraMessageEvent, KiraIMMessage, MessageChain
 from core.chat.session import User, Group, Session
 from core.chat.message_elements import Text
@@ -66,6 +66,7 @@ from .autonomy import (
     random_job_id,
 )
 from .storage import ReminderStorage
+from .delivery import DeliveryTracker
 from .reminder_service import ReminderService
 from .scheduler import ReminderScheduler
 from .time_utils import (
@@ -87,6 +88,8 @@ class ReminderPlugin(BasePlugin):
         data_dir = get_data_path() / "plugin_data" / "reminder_plugin"
         self._storage = ReminderStorage(data_dir / "reminders.json")
         self._autonomy_storage = ReminderStorage(data_dir / "autonomous_state.json")
+        self._delivery_storage = ReminderStorage(data_dir / "delivery_state.json")
+        self._delivery = DeliveryTracker(self._delivery_storage, self._storage)
         self._identity = IdentityResolver(secrets.token_urlsafe(32))
         self._scheduler: Optional[AsyncIOScheduler] = None
         # 待确认删除缓存: token -> {session_id, job_ids, content, expires_at}
@@ -130,6 +133,10 @@ class ReminderPlugin(BasePlugin):
         return migrated
 
     async def initialize(self):
+        if "provider_call_succeeded" not in getattr(LLMResponse, "__dataclass_fields__", {}):
+            raise RuntimeError(
+                "当前 KiraAI 核心缺少结构化 LLM 投递回执；请先更新主项目再启用提醒插件"
+            )
         await self._migrate_identity_schema_v2()
 
         self._scheduler = AsyncIOScheduler()
@@ -188,6 +195,68 @@ class ReminderPlugin(BasePlugin):
     ):
         self._filter_internal_event_tools(event, req)
 
+    @on.llm_request(priority=Priority.LOW)
+    async def inject_delivery_issues(self, event: KiraMessageBatchEvent, req: LLMRequest, *_):
+        if self._has_mixed_senders(event):
+            return
+        principal = self._get_principal(event)
+        if principal.delivery_id:
+            return
+        await self._delivery.reconcile()
+        issues = await self._delivery.list_issues(
+            self._get_sid(event), principal, self.config.admin_users,
+            self._allowed_autonomy_sessions(),
+        )
+        visible = [
+            issue for issue in issues
+            if not issue.get("review_after")
+            or issue["review_after"] <= datetime.datetime.now().isoformat(timespec="seconds")
+        ][:5]
+        if not visible:
+            return
+        lines = [
+            "以下是本会话尚未确认由 LLM 处理的提醒。结果不明或包含 action 时，不要直接重复执行原动作："
+        ]
+        for issue in visible:
+            reminder = issue.get("reminder") or {}
+            lines.append(
+                f"- id={issue['delivery_id']} 状态={issue['status']} "
+                f"原定时间={reminder.get('time', '?')} 内容={str(reminder.get('content', ''))[:120]} "
+                f"含动作={'是' if reminder.get('action') else '否'}"
+            )
+        lines.append(
+            "可用 list_delivery_issues 查看详情，再用 review_delivery_issue 记录决定。"
+            "需要重新安排时，先成功创建替代提醒，再处理旧投递记录。"
+        )
+        req.system_prompt.append(Prompt("\n".join(lines), name="reminder_delivery_recovery", source="reminder_plugin"))
+
+    @on.llm_response(priority=Priority.HIGH)
+    async def acknowledge_delivery(self, event: KiraMessageBatchEvent, resp: LLMResponse, *_):
+        principal = self._get_principal(event)
+        if not (principal.trusted and principal.delivery_id):
+            return
+        if principal.origin not in {EventOrigin.REMINDER_FIRE, EventOrigin.AUTONOMY_FOLLOWUP_DUE}:
+            return
+        sid = self._get_sid(event)
+        if not getattr(resp, "provider_call_succeeded", False):
+            await self._delivery.mark(
+                sid, principal.delivery_id, "unconfirmed",
+                "provider did not return a normal response",
+            )
+            return
+        entry = await self._delivery.mark(sid, principal.delivery_id, "llm_received")
+        if entry and self._is_autonomous_reminder(entry.get("reminder") or {}):
+            await self._mark_autonomous_followup_fired(sid, entry["reminder"])
+
+    @staticmethod
+    def _has_mixed_senders(event: KiraMessageBatchEvent) -> bool:
+        messages = getattr(event, "messages", []) or []
+        senders = {
+            str(getattr(getattr(message, "sender", None), "user_id", "") or "")
+            for message in messages
+        }
+        return len(senders) > 1
+
     @staticmethod
     def _insert_prompt_after(prompts: list[Prompt], prompt: Prompt, after_name: str):
         for idx, item in enumerate(prompts):
@@ -239,10 +308,17 @@ class ReminderPlugin(BasePlugin):
         if not (principal.trusted and principal.kind is PrincipalKind.BOT and principal.is_autonomy_event):
             return
         allowed = set(self.config.autonomy_allowed_tools)
+        if (
+            principal.session_id in getattr(self.config, "allowed_sessions", [])
+            and ":dm:" in principal.session_id
+        ):
+            allowed.update({"list_delivery_issues", "review_delivery_issue"})
         if self.config.autonomy_mode != "trusted_admin":
-            allowed &= set(DEFAULT_AUTONOMY_ALLOWED_TOOLS)
+            allowed &= set(DEFAULT_AUTONOMY_ALLOWED_TOOLS) | {
+                "list_delivery_issues", "review_delivery_issue"
+            }
         if self.config.autonomy_mode == "observe":
-            allowed &= {"list_reminders", "list_autonomous_intents"}
+            allowed &= {"list_reminders", "list_autonomous_intents", "list_delivery_issues"}
         disabled = [tool.name for tool in tools if getattr(tool, "name", "") not in allowed]
         if disabled:
             tool_set.remove(*disabled)
@@ -433,6 +509,39 @@ class ReminderPlugin(BasePlugin):
         except Exception as e:
             logger.error(f"[Reminder] WebUI 获取提醒列表失败: {e}")
             return {"status": "error", "msg": str(e)}
+
+    @register.api("GET", "/deliveries/{session_id}")
+    async def api_get_deliveries(self, session_id: str):
+        try:
+            sid = unquote(session_id)
+            await self._delivery.reconcile()
+            principal = self._get_principal(self._build_web_event(sid))
+            issues = await self._delivery.list_issues(
+                sid, principal, self.config.admin_users, self._allowed_autonomy_sessions(),
+                include_awaiting=True,
+            )
+            return {"status": "ok", "data": issues}
+        except Exception as e:
+            logger.error(f"[Reminder] WebUI 获取投递状态失败: {e}")
+            return {"status": "error", "msg": str(e)}
+
+    @register.api("POST", "/deliveries/{decision}")
+    async def api_review_delivery(self, decision: str, payload: dict):
+        sid = str(payload.get("session_id") or "")
+        delivery_id = str(payload.get("delivery_id") or "")
+        if not sid or not delivery_id:
+            return {"status": "error", "msg": "缺少必要参数"}
+        principal = self._get_principal(self._build_web_event(sid))
+        message, entry = await self._delivery.resolve(
+            sid, delivery_id, principal, self.config.admin_users,
+            self._allowed_autonomy_sessions(), decision, allow_unsafe_retry=True,
+        )
+        if entry and decision == "retry":
+            await self._fire_reminder(
+                sid, entry["reminder"], delivery_id=entry["retry_delivery_id"]
+            )
+            message = "重试已提交，等待模型确认；请刷新投递状态查看结果"
+        return {"status": "ok" if entry else "error", "msg": message}
 
     @register.api("POST", "/reminders/confirm-delete")
     async def api_confirm_delete_reminder(self, payload: dict):
@@ -667,6 +776,7 @@ class ReminderPlugin(BasePlugin):
     def _scheduler_service(self) -> ReminderScheduler:
         return ReminderScheduler(
             storage=self._storage,
+            delivery=self._delivery,
             get_scheduler=lambda: self._scheduler,
             fire_reminder=self._fire_reminder,
             get_fire_semaphore=lambda: self._fire_semaphore,
@@ -678,7 +788,8 @@ class ReminderPlugin(BasePlugin):
         )
 
     async def _restore_jobs(self):
-        """Restore persisted reminder jobs and discard expired one-time records."""
+        """Restore jobs while retaining unconfirmed overdue reminders."""
+        await self._delivery.reconcile(startup=True)
         await self._scheduler_service().restore_jobs()
 
     def _add_job(self, sid: str, r: Dict):
@@ -695,6 +806,7 @@ class ReminderPlugin(BasePlugin):
         principal_id: str = "",
         delegated_owner_id: str = "",
         capabilities: Optional[set[str]] = None,
+        delivery_id: str = "",
     ):
         """Publish a reminder notice and force the current session buffer to flush."""
         cur_time = int(time.time())
@@ -733,6 +845,7 @@ class ReminderPlugin(BasePlugin):
             principal_id=resolved_principal_id,
             delegated_owner_id=delegated_owner_id,
             capabilities=capabilities or set(),
+            delivery_id=delivery_id,
         )
         event = KiraMessageEvent(
             adapter=adapter.info,
@@ -763,9 +876,9 @@ class ReminderPlugin(BasePlugin):
         event.flush(force=True)
         await self.ctx.event_bus.publish(event)
 
-    async def _fire_reminder(self, sid: str, r: Dict):
+    async def _fire_reminder(self, sid: str, r: Dict, delivery_id: str | None = None):
         """Run a scheduled reminder with the current delivery dependencies."""
-        await self._scheduler_service().fire_reminder(sid, r)
+        await self._scheduler_service().fire_reminder(sid, r, delivery_id=delivery_id)
 
     @on.im_message(priority=Priority.HIGH)
     async def handle_quick_command(self, event: KiraMessageEvent):
@@ -1093,7 +1206,21 @@ class ReminderPlugin(BasePlugin):
         params={"type": "object", "properties": {}, "required": []}
     )
     async def list_reminders(self, event: KiraMessageBatchEvent, **kwargs) -> str:
-        return await self._reminder_service().list_reminders(event)
+        result = await self._reminder_service().list_reminders(event)
+        if self._has_mixed_senders(event):
+            return result
+        await self._delivery.reconcile()
+        issues = await self._delivery.list_issues(
+            self._get_sid(event), self._get_principal(event), self.config.admin_users,
+            self._allowed_autonomy_sessions(), include_awaiting=True,
+        )
+        if issues:
+            statuses = "\n".join(
+                f"job_id: {issue['job_id']} 投递状态: {issue['status']}"
+                for issue in issues[:20]
+            )
+            result += "\n\n待确认投递：\n" + statuses
+        return result
 
     @register_tool(
         name="list_autonomous_intents",
@@ -1329,3 +1456,58 @@ class ReminderPlugin(BasePlugin):
         return await self._reminder_service().edit_reminder(
             event, job_id, content, time, repeat, interval_minutes, category, action,
         )
+
+    @register_tool(
+        name="list_delivery_issues",
+        description="查看当前会话有权限访问的未确认提醒投递。结果不明的记录可能已被模型处理，不可直接假定未执行。",
+        params={"type": "object", "properties": {}},
+    )
+    async def list_delivery_issues(self, event: KiraMessageBatchEvent, **kwargs) -> str:
+        if self._has_mixed_senders(event):
+            return "❌ 混合发送者批次不能查看投递记录"
+        sid = self._get_sid(event)
+        await self._delivery.reconcile()
+        issues = await self._delivery.list_issues(
+            sid, self._get_principal(event), self.config.admin_users,
+            self._allowed_autonomy_sessions(),
+        )
+        if not issues:
+            return "当前没有待处理的提醒投递"
+        lines = []
+        for issue in issues[:20]:
+            reminder = issue.get("reminder") or {}
+            lines.append(
+                f"id={issue['delivery_id']} 状态={issue['status']} "
+                f"原定时间={reminder.get('time', '?')} 内容={reminder.get('content', '')} "
+                f"含动作={'是' if reminder.get('action') else '否'}"
+            )
+        return "\n".join(lines)
+
+    @register_tool(
+        name="review_delivery_issue",
+        description="处理未确认提醒。retry 仅适用于明确失败且无 action 的提醒；结果不明或有 action 时只能延后，需用户到 WebUI 手动确认。",
+        params={
+            "type": "object",
+            "properties": {
+                "delivery_id": {"type": "string", "description": "投递记录 ID"},
+                "decision": {"type": "string", "enum": ["retry", "dismiss", "defer"], "description": "处理决定"},
+            },
+            "required": ["delivery_id", "decision"],
+        },
+    )
+    async def review_delivery_issue(
+        self, event: KiraMessageBatchEvent, delivery_id: str, decision: str, **kwargs
+    ) -> str:
+        if self._has_mixed_senders(event):
+            return "❌ 混合发送者批次不能处理投递记录"
+        sid = self._get_sid(event)
+        principal = self._get_principal(event)
+        message, entry = await self._delivery.resolve(
+            sid, delivery_id, principal, self.config.admin_users,
+            self._allowed_autonomy_sessions(), decision,
+        )
+        if entry and decision == "retry":
+            await self._fire_reminder(
+                sid, entry["reminder"], delivery_id=entry["retry_delivery_id"]
+            )
+        return message

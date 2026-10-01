@@ -5,6 +5,7 @@ createApp({
         // UI state
         const loading = ref(false)
         const reminders = ref([])
+        const deliveryIssues = ref([])
         const toasts = ref([])
         const pluginContext = ref(null)
 
@@ -40,7 +41,8 @@ createApp({
         const deleteToken = ref('')
 
         // Counts reflect the filtered view.
-        const activeCount = computed(() => filteredReminders.value.filter(r => !r.paused).length)
+        const pendingJobIds = computed(() => new Set(deliveryIssues.value.map(issue => issue.job_id)))
+        const activeCount = computed(() => filteredReminders.value.filter(r => !r.paused && !pendingJobIds.value.has(r.job_id)).length)
         const pausedCount = computed(() => filteredReminders.value.filter(r => r.paused).length)
         const importantCount = computed(() => filteredReminders.value.filter(r => r.important).length)
 
@@ -75,6 +77,7 @@ createApp({
 
             if (!sessionId.value.trim()) {
                 reminders.value = [] // Clear stale results on invalid input.
+                deliveryIssues.value = []
                 return showToast('参数校验失败', '必须提供目标频率基站 (Session ID)', 'error')
             }
             loading.value = true
@@ -82,15 +85,53 @@ createApp({
                 const data = await pluginApi().get(`reminders/${encodeURIComponent(sessionId.value)}`, { _t: Date.now() })
                 if (data.status === 'ok') {
                     reminders.value = data.data
+                    await fetchDeliveryIssues()
                 } else {
                     reminders.value = [] // Clear data when access is denied.
+                    deliveryIssues.value = []
                     showToast('越权或拦截', data.msg, 'error')
                 }
             } catch (e) {
                 reminders.value = [] // Clear stale data after a connection failure.
+                deliveryIssues.value = []
                 showToast('链路断开', '无法握手微服务子节点', 'error')
             } finally {
                 loading.value = false
+            }
+        }
+
+        const fetchDeliveryIssues = async () => {
+            try {
+                const data = await pluginApi().get(`deliveries/${encodeURIComponent(sessionId.value)}`, { _t: Date.now() })
+                if (data.status === 'ok') {
+                    deliveryIssues.value = data.data
+                } else {
+                    deliveryIssues.value = []
+                    showToast('投递状态读取失败', data.msg, 'error')
+                }
+            } catch (e) {
+                deliveryIssues.value = []
+                showToast('投递状态读取失败', e.message, 'error')
+            }
+        }
+
+        const reviewDelivery = async (decision, issue) => {
+            if (decision === 'retry' || decision === 'dismiss') {
+                const warning = decision === 'retry'
+                    ? '模型可能已经处理过这条提醒。确定要再次交给模型吗？带动作的提醒可能重复执行。'
+                    : '确定将这次投递标记为无需补救吗？一次性提醒将从待办中移除。'
+                if (!window.confirm(warning)) return
+            }
+            try {
+                const data = await pluginApi().post(`deliveries/${decision}`, {
+                    session_id: sessionId.value,
+                    delivery_id: issue.delivery_id
+                })
+                showToast(data.status === 'ok' ? '处理决定已记录' : '处理失败', data.msg,
+                    data.status === 'ok' ? 'success' : 'error')
+                if (data.status === 'ok') await fetchReminders()
+            } catch (e) {
+                showToast('处理失败', e.message, 'error')
             }
         }
 
@@ -188,13 +229,13 @@ createApp({
         })
 
         return {
-            loading, reminders, toasts, availableSessions,
+            loading, reminders, deliveryIssues, pendingJobIds, toasts, availableSessions,
             sessionId, selectedUserId, currentSessionUsers, filteredReminders,
             showSessionDropdown,
             filteredSessions,
             selectSession,
             activeCount, pausedCount, importantCount,
-            fetchReminders, doAction, formatRepeat,
+            fetchReminders, doAction, reviewDelivery, formatRepeat,
             showConfirmModal, confirmMessage, deleteToken, closeModal, confirmDelete
         }
     }

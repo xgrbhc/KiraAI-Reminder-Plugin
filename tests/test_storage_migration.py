@@ -79,6 +79,7 @@ class StorageMigrationTests(unittest.TestCase):
         plugin.config = SimpleNamespace(
             autonomy_allowed_tools=["set_reminder", "exec"],
             autonomy_mode="plan_only",
+            allowed_sessions=[],
         )
         request = SimpleNamespace(tool_set=DummyToolSet(["set_reminder", "exec"]))
         plugin._filter_internal_event_tools(

@@ -11,6 +11,8 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from conftest import attach_delivery
+
 
 class FakeScheduler:
     def __init__(self):
@@ -23,6 +25,7 @@ class FakeScheduler:
 def test_trigger_types_and_registration_options(reminder_main, tmp_path: Path):
     plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
     plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
+    attach_delivery(plugin, reminder_main, tmp_path)
     plugin._scheduler = FakeScheduler()
     sid = "qq:dm:10001"
     expected = {
@@ -52,10 +55,11 @@ def test_trigger_types_and_registration_options(reminder_main, tmp_path: Path):
     assert len(plugin._scheduler.jobs) == len(expected)
 
 
-def test_restore_keeps_paused_and_bad_records_but_discards_expired(reminder_main, tmp_path: Path):
+def test_restore_keeps_paused_bad_and_overdue_records(reminder_main, tmp_path: Path):
     async def run():
         plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
         plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
+        attach_delivery(plugin, reminder_main, tmp_path)
         plugin._scheduler = FakeScheduler()
         now = dt.datetime.now()
         future = (now + dt.timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
@@ -71,9 +75,10 @@ def test_restore_keeps_paused_and_bad_records_but_discards_expired(reminder_main
         await plugin._storage.save({sid: records})
         await plugin._restore_jobs()
         assert [r["job_id"] for r in (await plugin._storage.load())[sid]] == [
-            "future", "repeat", "paused", "invalid"
+            "future", "expired", "repeat", "paused", "invalid"
         ]
         assert [options["id"] for _, options in plugin._scheduler.jobs] == ["future", "repeat"]
+        assert (await plugin._delivery_storage.load())[sid][0]["status"] == "legacy_unconfirmed"
 
     asyncio.run(run())
 
@@ -91,6 +96,7 @@ def test_health_check_restarts_stopped_scheduler_once(reminder_main, tmp_path: P
 
     plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
     plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
+    attach_delivery(plugin, reminder_main, tmp_path)
     plugin._scheduler = RestartableScheduler()
     sleep_calls = 0
 
@@ -106,10 +112,11 @@ def test_health_check_restarts_stopped_scheduler_once(reminder_main, tmp_path: P
     assert sleep_calls == 2
 
 
-def test_one_time_delivery_publishes_and_removes_record(reminder_main, tmp_path: Path):
+def test_one_time_delivery_waits_for_model_receipt(reminder_main, tmp_path: Path):
     async def run():
         plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
         plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
+        attach_delivery(plugin, reminder_main, tmp_path)
         plugin._fire_semaphore = asyncio.Semaphore(3)
         plugin.config = SimpleNamespace(autonomy_mode="plan_only")
         plugin._is_autonomous_reminder = lambda _record: False
@@ -136,6 +143,10 @@ def test_one_time_delivery_publishes_and_removes_record(reminder_main, tmp_path:
         assert published[0]["principal_kind"] is reminder_main.PrincipalKind.USER
         assert published[0]["principal_id"] == "10001"
         assert published[0]["origin"] is reminder_main.EventOrigin.REMINDER_FIRE
+        assert (await plugin._storage.load())[sid] == [record]
+        delivery_id = published[0]["delivery_id"]
+        assert (await plugin._delivery_storage.load())[sid][0]["status"] == "awaiting_llm"
+        await plugin._delivery.mark(sid, delivery_id, "llm_received")
         assert await plugin._storage.load() == {sid: []}
 
     asyncio.run(run())
@@ -152,6 +163,7 @@ def test_delivery_retries_three_times_and_records_failure(reminder_main, tmp_pat
     async def run():
         plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
         plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
+        attach_delivery(plugin, reminder_main, tmp_path)
         plugin._fire_semaphore = asyncio.Semaphore(3)
         plugin.config = SimpleNamespace(autonomy_mode="plan_only")
         plugin._is_autonomous_reminder = lambda _record: False
@@ -168,7 +180,7 @@ def test_delivery_retries_three_times_and_records_failure(reminder_main, tmp_pat
         stored = (await plugin._storage.load())[sid][0]
         assert len(attempts) == 3
         assert stored["job_id"] == "job-1"
-        assert "failed_at" in stored
+        assert (await plugin._delivery_storage.load())[sid][0]["status"] == "failed"
 
     asyncio.run(run())
 
@@ -177,6 +189,7 @@ def test_autonomous_followup_delivery_keeps_bot_identity(reminder_main, tmp_path
     async def run():
         plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
         plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
+        attach_delivery(plugin, reminder_main, tmp_path)
         plugin._fire_semaphore = asyncio.Semaphore(3)
         plugin.config = SimpleNamespace(autonomy_mode="trusted_admin")
         plugin._is_autonomous_reminder = lambda _record: True
@@ -203,7 +216,9 @@ def test_autonomous_followup_delivery_keeps_bot_identity(reminder_main, tmp_path
         assert published[0]["principal_kind"] is reminder_main.PrincipalKind.BOT
         assert published[0]["origin"] is reminder_main.EventOrigin.AUTONOMY_FOLLOWUP_DUE
         assert "reminder.manage_all" in published[0]["capabilities"]
-        assert marked == [(sid, "job-1")]
+        assert marked == []
+        assert (await plugin._storage.load())[sid] == [record]
+        await plugin._delivery.mark(sid, published[0]["delivery_id"], "llm_received")
         assert await plugin._storage.load() == {sid: []}
 
     asyncio.run(run())

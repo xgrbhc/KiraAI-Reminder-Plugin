@@ -16,6 +16,7 @@ from core.chat.message_elements import Text
 from core.chat.message_utils import MessageChain
 
 from .identity import EventOrigin, PrincipalKind
+from .delivery import DeliveryTracker
 from .storage import ReminderStorage
 from .time_utils import get_local_now, parse_time_string
 
@@ -31,6 +32,7 @@ class ReminderScheduler:
         self,
         *,
         storage: ReminderStorage,
+        delivery: DeliveryTracker,
         get_scheduler: Callable[[], Any],
         fire_reminder: Callable[[str, dict], Any],
         get_fire_semaphore: Callable[[], Any],
@@ -41,6 +43,7 @@ class ReminderScheduler:
         mark_autonomous_followup_fired: Callable[[str, dict], Any],
     ) -> None:
         self._storage = storage
+        self._delivery = delivery
         self._get_scheduler = get_scheduler
         self._fire_reminder = fire_reminder
         self._get_fire_semaphore = get_fire_semaphore
@@ -72,7 +75,7 @@ class ReminderScheduler:
         async with self._storage.modify() as data:
             now = get_local_now()
             restored = 0
-            expired = 0
+            overdue = 0
             for sid, reminders in list(data.items()):
                 kept = []
                 for r in reminders:
@@ -90,14 +93,16 @@ class ReminderScheduler:
                             kept.append(r)
                             restored += 1
                         else:
-                            expired += 1
+                            # Recovery owns overdue one-time records until review.
+                            kept.append(r)
+                            overdue += 1
                     except Exception as e:
                         logger.warning(f"[Reminder] 恢复任务失败: {e}")
                         kept.append(r)
                 data[sid] = kept
 
-            if expired:
-                logger.info(f"[Reminder] 清理了 {expired} 条过期一次性提醒")
+            if overdue:
+                logger.info(f"[Reminder] 保留了 {overdue} 条过期一次性提醒待确认")
             if restored:
                 logger.info(f"[Reminder] 已恢复 {restored} 个提醒任务")
 
@@ -143,8 +148,29 @@ class ReminderScheduler:
         except Exception as e:
             logger.warning(f"[Reminder] 添加调度任务失败 job_id={job_id}: {e}")
 
-    async def fire_reminder(self, sid: str, reminder: dict) -> None:
+    async def fire_reminder(
+        self, sid: str, reminder: dict, delivery_id: str | None = None
+    ) -> None:
         async with self._get_fire_semaphore():
+            job_id = str(reminder.get("job_id") or "")
+            current_data = await self._storage.load()
+            current = next(
+                (item for item in current_data.get(sid, []) if item.get("job_id") == job_id),
+                None,
+            )
+            if current is None or current.get("paused"):
+                if delivery_id:
+                    await self._delivery.mark(sid, delivery_id, "failed", "reminder deleted or paused")
+                return
+            reminder = current
+            try:
+                if delivery_id is None:
+                    delivery_id = await self._delivery.begin(sid, reminder)
+            except Exception as e:
+                logger.error(f"[Reminder] 创建投递记录失败 sid={sid}: {e}")
+                return
+            if not delivery_id:
+                return
             content = reminder.get("content", "")
             job_id = reminder.get("job_id", "")
             repeat = reminder.get("repeat", "none")
@@ -200,6 +226,7 @@ class ReminderScheduler:
                         principal_id=principal_id,
                         delegated_owner_id=str(reminder.get("owner_id") or ""),
                         capabilities=capabilities,
+                        delivery_id=delivery_id,
                     )
                     sent = True
                     break
@@ -212,19 +239,6 @@ class ReminderScheduler:
             if not sent:
                 logger.error(f"[Reminder] 提醒发送彻底失败 sid={sid} job_id={job_id}")
                 try:
-                    async with self._storage.modify() as data:
-                        for rv in data.get(sid, []):
-                            if rv.get("job_id") == job_id:
-                                rv["failed_at"] = get_local_now().strftime("%Y-%m-%d %H:%M")
-                                break
-                except Exception:
-                    pass
-            elif self._is_autonomous_reminder(reminder):
-                await self._mark_autonomous_followup_fired(sid, reminder)
-            if sent and repeat == "none":
-                try:
-                    async with self._storage.modify() as data:
-                        if sid in data:
-                            data[sid] = [rv for rv in data[sid] if rv.get("job_id") != job_id]
+                    await self._delivery.mark(sid, delivery_id, "failed", "event publish failed")
                 except Exception as e:
-                    logger.warning(f"[Reminder] 清理已触发提醒失败: {e}")
+                    logger.error(f"[Reminder] 记录投递失败状态失败: {e}")

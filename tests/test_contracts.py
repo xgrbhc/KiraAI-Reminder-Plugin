@@ -17,6 +17,7 @@ from starlette.testclient import TestClient
 from core.plugin.plugin_registry import PluginComponents, _plugin_components
 
 from _loader import PLUGIN_DIR, load_plugin_module
+from conftest import attach_delivery
 
 
 TOOL_NAMES = {
@@ -34,6 +35,8 @@ TOOL_NAMES = {
     "update_autonomous_intent",
     "close_autonomous_intent",
     "schedule_intent_followup",
+    "list_delivery_issues",
+    "review_delivery_issue",
 }
 
 
@@ -68,11 +71,13 @@ def test_registered_entry_points(reminder_main):
     components = _plugin_components["reminder_plugin"]
     assert set(components.tools) == TOOL_NAMES
     assert all(tool["parameters"]["type"] == "object" for tool in components.tools.values())
-    assert len(components.hooks) == 3
+    assert len(components.hooks) == 5
     assert {hook.handler.__name__ for hook in components.hooks} == {
         "inject_usage_prompt",
         "enforce_autonomy_tool_policy",
         "handle_quick_command",
+        "inject_delivery_issues",
+        "acknowledge_delivery",
     }
     assert [(page["route"], page["auth"]) for page in components.pages] == [
         ("/dashboard", True)
@@ -82,6 +87,8 @@ def test_registered_entry_points(reminder_main):
         ("GET", "/reminders/{session_id}", True),
         ("POST", "/reminders/confirm-delete", True),
         ("POST", "/reminders/{action}", True),
+        ("GET", "/deliveries/{session_id}", True),
+        ("POST", "/deliveries/{decision}", True),
     }
     assert components.tool_funcs["set_reminder"] is reminder_main.ReminderPlugin.set_reminder
 
@@ -96,9 +103,9 @@ def test_fresh_main_import_keeps_single_registration_set(reminder_main):
             load_plugin_module("main", package_name=package_name)
             components = _plugin_components["reminder_plugin"]
             assert set(components.tools) == TOOL_NAMES
-            assert len(components.hooks) == 3
+            assert len(components.hooks) == 5
             assert len(components.pages) == 1
-            assert len(components.api_routes) == 4
+            assert len(components.api_routes) == 6
     finally:
         _plugin_components["reminder_plugin"] = original
         for module_name in tuple(sys.modules):
@@ -222,6 +229,7 @@ def test_important_delete_requires_actor_bound_confirmation(reminder_main, tmp_p
     async def run():
         plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
         plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
+        attach_delivery(plugin, reminder_main, tmp_path)
         await plugin._storage.save({sid: [record]})
         plugin._pending = {}
         plugin._scheduler = None
@@ -262,6 +270,7 @@ def test_list_reminders_preserves_visible_fields(reminder_main, tmp_path: Path):
     async def run():
         plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
         plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
+        attach_delivery(plugin, reminder_main, tmp_path)
         plugin._pending = {}
         plugin._scheduler = None
         plugin.config = SimpleNamespace(admin_users=[])
@@ -272,6 +281,7 @@ def test_list_reminders_preserves_visible_fields(reminder_main, tmp_path: Path):
             principal_id="10001",
             session_id=sid,
         )
+        plugin._allowed_autonomy_sessions = lambda: []
         await plugin._storage.save({sid: [{
             "job_id": "job-1",
             "content": "test",

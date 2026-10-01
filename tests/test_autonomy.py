@@ -12,6 +12,8 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from conftest import attach_delivery
+
 
 class FakeScheduler:
     def __init__(self):
@@ -28,6 +30,7 @@ def make_autonomy_plugin(reminder_main, tmp_path: Path):
     plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
     plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
     plugin._autonomy_storage = reminder_main.ReminderStorage(tmp_path / "autonomous_state.json")
+    attach_delivery(plugin, reminder_main, tmp_path)
     plugin._scheduler = FakeScheduler()
     plugin.config = SimpleNamespace(
         autonomy_enabled=True,

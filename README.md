@@ -26,15 +26,14 @@
 - 📅 **多维时间引擎**：支持 `精准定时`、`周期循环` (每天/周/月/年)、`间隔触发` (每N分钟)。
 - 🎲 **拟真随机延时**：指定时间段内触发 N 次随机提醒，让 AI 带有“人性化”的不可预测感。
 - 🧭 **自主意图循环**：支持白名单会话中的每日复盘、低频随机检查、意图状态维护和到期跟进兜底。
+- 📬 **提醒投递回执**：只有包含提醒的模型调用正常返回后，才清理一次性提醒；失败或结果不明时保留状态，供后续 LLM 或 WebUI 审慎补救。
 - 🔐 **可信身份与统一 ACL**：区分用户、机器人、系统、Web 管理端和遗留记录；内部事件使用进程级可信信封，不再依赖 `system/unknown` 放行。
 - 🌐 **主 WebUI 侧边栏看板**：基于 KiraAI `v2.23.0` 插件页面注册能力，入口为主 WebUI 左侧 `提醒 / Reminders`，统一走主 WebUI 认证与插件 API。
 - ⚡ **无延迟极速指令**：内置类 CLI 命令解析器（如 `/r add`），绕过 LLM 思考过程，毫秒级响应您的增删改查。
 - 🛡️ **防误删与越权保护**：
   - 全局超管（上帝视角）可指令级透视全域用户数据 `/r all`。
   - 重要提醒（⭐）被大模型试图删除时，强制下发 Token 令牌进行二次安全确认。
-- 💾 **工业级高可用架构**：
-  - 原子级排他并发锁，多线程高频读写绝不损坏 `.json` 数据文件。
-  - 调度器长驻健康哨兵检查、宕机自启、投递异常指数退避重试（MaxRetries=3）。
+- 💾 **数据与调度保护**：JSON 文件采用同进程异步锁与原子替换；调度器健康检查会尝试重启。事件发布失败最多尝试 3 次，间隔固定为 5 秒。模型响应失败、超时或进程中断不会被误报为确认成功；仍需留意平台消息发送属于独立链路。
 
 ---
 
@@ -54,6 +53,7 @@ KiraAI/
                 ├── time_utils.py
                 ├── reminder_service.py
                 ├── scheduler.py
+                ├── delivery.py
                 ├── autonomy.py
                 ├── identity.py
                 ├── permissions.py
@@ -68,6 +68,7 @@ KiraAI/
                      ├── test_contracts.py
                      ├── test_reminder_service.py
                      ├── test_scheduler.py
+                     ├── test_delivery.py
                      ├── test_autonomy.py
                      ├── test_identity_permissions.py
                      └── test_storage_migration.py
@@ -86,7 +87,7 @@ KiraAI/
 
 升级到 v2.2.0 时，旧提醒会幂等迁移到 identity schema v2。首次迁移前会在插件数据目录生成 `reminders.pre-v2.2.backup.json`；无法恢复所有者的群聊旧记录仅管理员可见和管理。
 
-如果 `reminders.json` 或 `autonomous_state.json` 已存在但无法读取、JSON 不完整或顶层不是对象，插件会报错并保留原文件，不再把它当作空数据写回。遇到此错误时，先关闭 KiraAI，备份异常文件，再检查权限或从可信备份恢复；不要直接删除或清空原文件。文件确实不存在时仍按首次使用处理。
+如果 `reminders.json`、`autonomous_state.json` 或新增的 `delivery_state.json` 已存在但无法读取、JSON 不完整或顶层不是对象，插件会报错并保留原文件，不再把它当作空数据写回。遇到此错误时，先关闭 KiraAI，备份异常文件，再检查权限或从可信备份恢复；不要直接删除或清空原文件。文件确实不存在时仍按首次使用处理。
 
 ### 3. WebUI 入口
 
@@ -95,6 +96,8 @@ KiraAI/
 ```json
 "core_version": ">=2.23.0"
 ```
+
+**投递回执功能还要求主项目 `LLMResponse` 提供 `provider_call_succeeded` 结构化字段。** 当前这是与本插件同步实施的主项目改动，尚不能仅凭上述历史最低版本号判断兼容。若主项目没有该字段，插件会拒绝启动，而不会把模型结果误判为成功。正式发布前须协调主项目版本并更新 `core_version` 范围。
 
 安装并重启 KiraAI 后，可在主 WebUI 左侧侧边栏进入：`提醒 / Reminders`。
 
@@ -148,6 +151,7 @@ KiraAI/
 - 🛠 `list_autonomous_intents` / `create_autonomous_intent`：读取或创建当前会话的自主意图。
 - 🛠 `update_autonomous_intent` / `close_autonomous_intent`：维护、暂停或关闭自主意图。
 - 🛠 `schedule_intent_followup`：以 bot-owned reminder 安排下一次低频自主跟进。
+- 🛠 `list_delivery_issues` / `review_delivery_issue`：查看并处理当前主体有权访问的未确认投递；只允许明确失败且无 `action` 的记录由 LLM 自动重试。
 
 ---
 
