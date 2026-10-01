@@ -65,13 +65,158 @@ def test_only_normal_model_response_acknowledges_one_time_reminder(reminder_main
         delivery_id = await plugin._delivery.begin(SID, record)
         event = _event(plugin, reminder_main, delivery_id)
 
-        await plugin.acknowledge_delivery(
-            event, reminder_main.LLMResponse("[ProviderError]", provider_call_succeeded=False)
+        await plugin.acknowledge_delivery(event, reminder_main.LLMResponse(""))
+        assert (await plugin._delivery_storage.load())[SID][0]["status"] == "llm_received"
+        assert (await plugin._storage.load())[SID] == []
+
+    asyncio.run(run())
+
+
+def test_provider_exception_keeps_synthetic_response_unconfirmed(reminder_main, tmp_path: Path):
+    async def run():
+        plugin = _plugin(reminder_main, tmp_path)
+        record = _record()
+        await plugin._storage.save({SID: [record]})
+        delivery_id = await plugin._delivery.begin(SID, record)
+        event = _event(plugin, reminder_main, delivery_id)
+
+        await plugin.observe_provider_failure(
+            event,
+            reminder_main.KiraExceptionEvent(
+                name="ProviderAPIError", message="offline",
+                stage="agent_loop", source="provider",
+            ),
         )
+        await plugin.acknowledge_delivery(event, reminder_main.LLMResponse("[ProviderError]"))
+        await plugin.acknowledge_delivery(event, reminder_main.LLMResponse("late response"))
         assert (await plugin._delivery_storage.load())[SID][0]["status"] == "unconfirmed"
         assert (await plugin._storage.load())[SID] == [record]
 
-        await plugin.acknowledge_delivery(event, reminder_main.LLMResponse(""))
+    asyncio.run(run())
+
+
+def test_core_provider_failure_hook_order_keeps_delivery_unconfirmed(
+    reminder_main, tmp_path: Path, monkeypatch
+):
+    from core.agent.agent_executor import AgentExecutionContext, AgentExecutor
+    from core.plugin.plugin_handlers import EventHandler, EventType, Priority, event_handler_reg
+    from core.provider import LLMRequest, ProviderAPIError
+
+    async def run():
+        plugin = _plugin(reminder_main, tmp_path)
+        record = _record()
+        await plugin._storage.save({SID: [record]})
+        delivery_id = await plugin._delivery.begin(SID, record)
+        event = _event(plugin, reminder_main, delivery_id)
+        event.is_stopped = False
+        handlers = {
+            EventType.ON_EXCEPTION: [
+                EventHandler(EventType.ON_EXCEPTION, Priority.HIGH, plugin.observe_provider_failure)
+            ],
+            EventType.ON_LLM_RESPONSE: [
+                EventHandler(EventType.ON_LLM_RESPONSE, Priority.HIGH, plugin.acknowledge_delivery)
+            ],
+        }
+        monkeypatch.setattr(
+            event_handler_reg, "get_handlers",
+            lambda event_type: handlers.get(event_type, []),
+        )
+
+        async def failed_chat(_request):
+            raise ProviderAPIError("offline")
+
+        model = SimpleNamespace(
+            model=SimpleNamespace(provider_name="test", model_id="test"),
+            chat=failed_chat,
+        )
+        context = AgentExecutionContext(
+            event=event, request=LLMRequest(messages=[]), new_messages=[], model_group=[model]
+        )
+        results = [step async for step in AgentExecutor(None).run(context, max_steps=1)]
+        assert results[0].state == "error"
+        assert (await plugin._delivery_storage.load())[SID][0]["status"] == "unconfirmed"
+        assert (await plugin._storage.load())[SID] == [record]
+
+    asyncio.run(run())
+
+
+def test_transient_failure_to_record_provider_error_cannot_confirm_delivery(
+    reminder_main, tmp_path: Path
+):
+    async def run():
+        plugin = _plugin(reminder_main, tmp_path)
+        record = _record()
+        await plugin._storage.save({SID: [record]})
+        delivery_id = await plugin._delivery.begin(SID, record)
+        event = _event(plugin, reminder_main, delivery_id)
+        original_mark = plugin._delivery.mark
+        failed_once = False
+
+        async def mark(sid, event_id, status, error=""):
+            nonlocal failed_once
+            if status == "unconfirmed" and not failed_once:
+                failed_once = True
+                raise OSError("simulated transient write failure")
+            return await original_mark(sid, event_id, status, error)
+
+        plugin._delivery.mark = mark
+        with pytest.raises(OSError):
+            await plugin.observe_provider_failure(
+                event,
+                reminder_main.KiraExceptionEvent(
+                    name="ProviderAPIError", message="offline",
+                    stage="agent_loop", source="provider",
+                ),
+            )
+        await plugin.acknowledge_delivery(event, reminder_main.LLMResponse("[ProviderError]"))
+        assert (await plugin._delivery_storage.load())[SID][0]["status"] == "unconfirmed"
+        assert (await plugin._storage.load())[SID] == [record]
+
+    asyncio.run(run())
+
+
+def test_core_model_fallback_success_confirms_delivery(reminder_main, tmp_path: Path, monkeypatch):
+    from core.agent.agent_executor import AgentExecutionContext, AgentExecutor
+    from core.plugin.plugin_handlers import EventHandler, EventType, Priority, event_handler_reg
+    from core.provider import LLMRequest, ProviderAPIError
+
+    async def run():
+        plugin = _plugin(reminder_main, tmp_path)
+        record = _record()
+        await plugin._storage.save({SID: [record]})
+        delivery_id = await plugin._delivery.begin(SID, record)
+        event = _event(plugin, reminder_main, delivery_id)
+        event.is_stopped = False
+        handlers = {
+            EventType.ON_EXCEPTION: [
+                EventHandler(EventType.ON_EXCEPTION, Priority.HIGH, plugin.observe_provider_failure)
+            ],
+            EventType.ON_LLM_RESPONSE: [
+                EventHandler(EventType.ON_LLM_RESPONSE, Priority.HIGH, plugin.acknowledge_delivery)
+            ],
+        }
+        monkeypatch.setattr(
+            event_handler_reg, "get_handlers",
+            lambda event_type: handlers.get(event_type, []),
+        )
+
+        async def failed_chat(_request):
+            raise ProviderAPIError("primary unavailable")
+
+        async def normal_chat(_request):
+            return reminder_main.LLMResponse("")
+
+        models = [
+            SimpleNamespace(
+                model=SimpleNamespace(provider_name="test", model_id=name), chat=chat
+            )
+            for name, chat in (("primary", failed_chat), ("fallback", normal_chat))
+        ]
+        context = AgentExecutionContext(
+            event=event, request=LLMRequest(messages=[]), new_messages=[], model_group=models
+        )
+        results = [step async for step in AgentExecutor(None).run(context, max_steps=1)]
+        assert results[0].state == "success"
         assert (await plugin._delivery_storage.load())[SID][0]["status"] == "llm_received"
         assert (await plugin._storage.load())[SID] == []
 
@@ -443,12 +588,15 @@ def test_unconfirmed_delivery_survives_fresh_plugin_without_replay(
         assert (await plugin._delivery_storage.load())[SID][0]["status"] == "awaiting_llm"
 
         if failure_mode == "provider_error":
-            await plugin.acknowledge_delivery(
-                _event(plugin, reminder_main, delivery_id),
-                reminder_main.LLMResponse(
-                    "[ProviderError]", provider_call_succeeded=False
+            event = _event(plugin, reminder_main, delivery_id)
+            await plugin.observe_provider_failure(
+                event,
+                reminder_main.KiraExceptionEvent(
+                    name="ProviderAPIError", message="offline",
+                    stage="agent_loop", source="provider",
                 ),
             )
+            await plugin.acknowledge_delivery(event, reminder_main.LLMResponse("[ProviderError]"))
         else:
             async with plugin._delivery_storage.modify() as state:
                 state[SID][0]["created_at"] = (

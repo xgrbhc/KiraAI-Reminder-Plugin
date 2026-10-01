@@ -91,13 +91,13 @@ KiraAI/
 
 ### 3. WebUI 入口
 
-本插件从 `v2.0.0` 起依赖 KiraAI `v2.23.0` 新增的插件 WebUI 页面注册能力，`manifest.json` 已设置：
+本插件从 `v2.0.0` 起使用 KiraAI `v2.23.0` 新增的插件 WebUI 页面注册能力；当前投递回执还依赖 `v2.24.2` 起在所有模型失败时触发的 provider 异常事件，因此 `manifest.json` 现设为：
 
 ```json
-"core_version": ">=2.23.0"
+"core_version": ">=2.24.2"
 ```
 
-**投递回执功能还要求主项目 `LLMResponse` 提供 `provider_call_succeeded` 结构化字段。** 当前这是与本插件同步实施的主项目改动，尚不能仅凭上述历史最低版本号判断兼容。若主项目没有该字段，插件会拒绝启动，而不会把模型结果误判为成功。正式发布前须协调主项目版本并更新 `core_version` 范围。
+投递回执只使用主项目已有的 `on.exception` 与 `on.llm_response` 钩子，不需要修改 KiraAI 核心。全部模型调用失败时，插件根据 `source=provider`、`stage=agent_loop` 的异常事件将该次投递标为“未确认”；随后收到的合成响应不能再将它标为成功。若进程中断或未收到回调，等待超时后同样保留为“未确认”。该状态不代表 QQ 已发送，也不代表用户已看到提醒。
 
 安装并重启 KiraAI 后，可在主 WebUI 左侧侧边栏进入：`提醒 / Reminders`。
 

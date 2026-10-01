@@ -69,6 +69,8 @@ class DeliveryTracker:
                     continue
                 if entry.get("status") not in OPEN_STATES:
                     return None
+                if status == "llm_received" and entry.get("status") != "awaiting_llm":
+                    return None
                 entry["status"] = status
                 entry["updated_at"] = _stamp()
                 if error:

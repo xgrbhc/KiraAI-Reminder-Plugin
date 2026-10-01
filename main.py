@@ -19,7 +19,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from core.plugin import BasePlugin, logger, register_tool, on, Priority, register, PluginPage, PageMenu
 from core.prompt_manager import Prompt
 from core.provider import LLMRequest, LLMResponse
-from core.chat.message_utils import KiraMessageBatchEvent, KiraMessageEvent, KiraIMMessage, MessageChain
+from core.chat.message_utils import KiraExceptionEvent, KiraMessageBatchEvent, KiraMessageEvent, KiraIMMessage, MessageChain
 from core.chat.session import User, Group, Session
 from core.chat.message_elements import Text
 from core.utils.path_utils import get_data_path
@@ -90,6 +90,7 @@ class ReminderPlugin(BasePlugin):
         self._autonomy_storage = ReminderStorage(data_dir / "autonomous_state.json")
         self._delivery_storage = ReminderStorage(data_dir / "delivery_state.json")
         self._delivery = DeliveryTracker(self._delivery_storage, self._storage)
+        self._failed_provider_deliveries: set[str] = set()
         self._identity = IdentityResolver(secrets.token_urlsafe(32))
         self._scheduler: Optional[AsyncIOScheduler] = None
         # 待确认删除缓存: token -> {session_id, job_ids, content, expires_at}
@@ -133,10 +134,6 @@ class ReminderPlugin(BasePlugin):
         return migrated
 
     async def initialize(self):
-        if "provider_call_succeeded" not in getattr(LLMResponse, "__dataclass_fields__", {}):
-            raise RuntimeError(
-                "当前 KiraAI 核心缺少结构化 LLM 投递回执；请先更新主项目再启用提醒插件"
-            )
         await self._migrate_identity_schema_v2()
 
         self._scheduler = AsyncIOScheduler()
@@ -230,6 +227,25 @@ class ReminderPlugin(BasePlugin):
         )
         req.system_prompt.append(Prompt("\n".join(lines), name="reminder_delivery_recovery", source="reminder_plugin"))
 
+    @on.exception(priority=Priority.HIGH)
+    async def observe_provider_failure(self, event: KiraMessageBatchEvent, exc: KiraExceptionEvent, *_):
+        principal = self._get_principal(event)
+        if not (principal.trusted and principal.delivery_id):
+            return
+        if principal.origin not in {EventOrigin.REMINDER_FIRE, EventOrigin.AUTONOMY_FOLLOWUP_DUE}:
+            return
+        if exc.source != "provider" or exc.stage != "agent_loop":
+            return
+        failed = getattr(self, "_failed_provider_deliveries", None)
+        if failed is None:
+            failed = self._failed_provider_deliveries = set()
+        failed.add(principal.delivery_id)
+        await self._delivery.mark(
+            self._get_sid(event), principal.delivery_id, "unconfirmed",
+            "provider did not return a normal response",
+        )
+        failed.discard(principal.delivery_id)
+
     @on.llm_response(priority=Priority.HIGH)
     async def acknowledge_delivery(self, event: KiraMessageBatchEvent, resp: LLMResponse, *_):
         principal = self._get_principal(event)
@@ -238,11 +254,13 @@ class ReminderPlugin(BasePlugin):
         if principal.origin not in {EventOrigin.REMINDER_FIRE, EventOrigin.AUTONOMY_FOLLOWUP_DUE}:
             return
         sid = self._get_sid(event)
-        if not getattr(resp, "provider_call_succeeded", False):
+        failed = getattr(self, "_failed_provider_deliveries", set())
+        if principal.delivery_id in failed:
             await self._delivery.mark(
                 sid, principal.delivery_id, "unconfirmed",
                 "provider did not return a normal response",
             )
+            failed.discard(principal.delivery_id)
             return
         entry = await self._delivery.mark(sid, principal.delivery_id, "llm_received")
         if entry and self._is_autonomous_reminder(entry.get("reminder") or {}):

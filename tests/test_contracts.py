@@ -40,6 +40,11 @@ TOOL_NAMES = {
 }
 
 
+def test_manifest_requires_core_with_provider_failure_hook():
+    manifest = json.loads((PLUGIN_DIR / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["core_version"] == ">=2.24.2"
+
+
 def test_dashboard_assets_resolve_from_folder_page():
     web_dir = PLUGIN_DIR / "web"
     app = FastAPI()
@@ -71,12 +76,13 @@ def test_registered_entry_points(reminder_main):
     components = _plugin_components["reminder_plugin"]
     assert set(components.tools) == TOOL_NAMES
     assert all(tool["parameters"]["type"] == "object" for tool in components.tools.values())
-    assert len(components.hooks) == 5
+    assert len(components.hooks) == 6
     assert {hook.handler.__name__ for hook in components.hooks} == {
         "inject_usage_prompt",
         "enforce_autonomy_tool_policy",
         "handle_quick_command",
         "inject_delivery_issues",
+        "observe_provider_failure",
         "acknowledge_delivery",
     }
     assert [(page["route"], page["auth"]) for page in components.pages] == [
@@ -103,7 +109,7 @@ def test_fresh_main_import_keeps_single_registration_set(reminder_main):
             load_plugin_module("main", package_name=package_name)
             components = _plugin_components["reminder_plugin"]
             assert set(components.tools) == TOOL_NAMES
-            assert len(components.hooks) == 5
+            assert len(components.hooks) == 6
             assert len(components.pages) == 1
             assert len(components.api_routes) == 6
     finally:
