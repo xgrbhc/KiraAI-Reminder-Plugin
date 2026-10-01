@@ -11,6 +11,10 @@ from typing import AsyncGenerator, Dict, List
 from core.plugin import logger
 
 
+class ReminderStorageError(RuntimeError):
+    """Raised when an existing data file cannot be read safely."""
+
+
 class ReminderStorage:
     """Serialize reminder data with an asyncio lock and atomic writes."""
 
@@ -20,13 +24,29 @@ class ReminderStorage:
         self._lock = asyncio.Lock()
 
     def _unsafe_load(self) -> Dict[str, List[Dict]]:
-        if not self.path.exists():
-            return {}
         try:
-            return json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception as e:
-            logger.error(f"[Reminder] 加载数据失败: {e}")
+            self.path.lstat()
+        except FileNotFoundError:
             return {}
+        except (OSError, UnicodeError) as e:
+            logger.error(f"[Reminder] 加载数据失败: {e}")
+            raise ReminderStorageError(f"Cannot read {self.path.name}") from e
+
+        try:
+            content = self.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as e:
+            logger.error(f"[Reminder] 加载数据失败: {e}")
+            raise ReminderStorageError(f"Cannot read {self.path.name}") from e
+
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.error(f"[Reminder] 加载数据失败: {e}")
+            raise ReminderStorageError(f"Invalid JSON in {self.path.name}") from e
+        if not isinstance(data, dict):
+            logger.error(f"[Reminder] 数据文件顶层必须是 JSON 对象: {self.path.name}")
+            raise ReminderStorageError(f"Invalid data shape in {self.path.name}")
+        return data
 
     def _unsafe_save(self, data: Dict[str, List[Dict]]):
         try:
@@ -54,6 +74,7 @@ class ReminderStorage:
 
     async def save(self, data: Dict[str, List[Dict]]):
         async with self._lock:
+            self._unsafe_load()
             self._unsafe_save(data)
 
     @asynccontextmanager

@@ -86,6 +86,8 @@ KiraAI/
 
 升级到 v2.2.0 时，旧提醒会幂等迁移到 identity schema v2。首次迁移前会在插件数据目录生成 `reminders.pre-v2.2.backup.json`；无法恢复所有者的群聊旧记录仅管理员可见和管理。
 
+如果 `reminders.json` 或 `autonomous_state.json` 已存在但无法读取、JSON 不完整或顶层不是对象，插件会报错并保留原文件，不再把它当作空数据写回。遇到此错误时，先关闭 KiraAI，备份异常文件，再检查权限或从可信备份恢复；不要直接删除或清空原文件。文件确实不存在时仍按首次使用处理。
+
 ### 3. WebUI 入口
 
 本插件从 `v2.0.0` 起依赖 KiraAI `v2.23.0` 新增的插件 WebUI 页面注册能力，`manifest.json` 已设置：

@@ -131,13 +131,24 @@ class ReminderPlugin(BasePlugin):
 
     async def initialize(self):
         await self._migrate_identity_schema_v2()
-        
+
         self._scheduler = AsyncIOScheduler()
-        self._scheduler.start()
-        await self._restore_jobs()
-        await self._start_autonomous_jobs()
-        # 启动健康检查后台协程
-        self._health_task = asyncio.get_event_loop().create_task(self._health_check_loop())
+        try:
+            self._scheduler.start()
+            await self._restore_jobs()
+            await self._start_autonomous_jobs()
+            self._health_task = asyncio.get_event_loop().create_task(self._health_check_loop())
+        except BaseException:
+            # Initialization can fail after jobs start; clean up on errors and cancellation.
+            if self._health_task and not self._health_task.done():
+                self._health_task.cancel()
+                self._health_task = None
+            if self._scheduler and self._scheduler.running:
+                try:
+                    self._scheduler.shutdown(wait=False)
+                except Exception as cleanup_error:
+                    logger.error(f"[Reminder] 初始化失败后关闭调度器失败: {cleanup_error}")
+            raise
         logger.info("[Reminder] 插件初始化完成，调度器与健康检查已启动")
 
     async def terminate(self):
