@@ -40,6 +40,18 @@ body {
     animation: fadeIn 0.6s ease-out forwards;
 }
 [v-cloak] { display: none; }
+button:disabled, input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+button:focus-visible {
+    outline: 2px solid #a5b4fc;
+    outline-offset: 3px;
+}
+.dialog-panel {
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+}
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {

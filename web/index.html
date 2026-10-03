@@ -26,31 +26,35 @@
                 <div id="session-select-container" class="relative">
                     <div class="glass-panel px-4 py-3 flex items-center gap-3 relative z-40 hover:bg-white/5 transition-colors focus-within:ring-2 focus-within:ring-indigo-500/50 cursor-text shadow-lg">
                         <i class="fa-solid fa-layer-group transition-colors" :class="sessionId ? 'text-indigo-400' : 'text-gray-500'"></i>
-                        <input v-model="sessionId" @focus="showSessionDropdown = true" @blur="setTimeout(() => showSessionDropdown = false, 200)" type="text" placeholder="Session ID (群号/会话标志)" class="bg-transparent border-none text-sm text-gray-200 focus:outline-none w-64 placeholder-gray-500 font-medium" @keyup.enter="fetchReminders">
-                        <i class="fa-solid fa-chevron-down text-xs text-gray-500 transition-transform cursor-pointer hover:text-white" :class="{'rotate-180': showSessionDropdown}" @click="showSessionDropdown = !showSessionDropdown"></i>
+                        <input v-model="sessionId" :disabled="mutationBusy" @focus="showSessionDropdown = true" @blur="showSessionDropdown = false" type="text" aria-label="Session ID" placeholder="Session ID (群号/会话标志)" class="bg-transparent border-none text-sm text-gray-200 focus:outline-none w-64 placeholder-gray-500 font-medium" @keyup.enter="fetchReminders">
+                        <button type="button" :disabled="mutationBusy" aria-label="选择会话" @pointerdown.prevent @click="showSessionDropdown = !showSessionDropdown"><i class="fa-solid fa-chevron-down text-xs text-gray-500 transition-transform hover:text-white" :class="{'rotate-180': showSessionDropdown}"></i></button>
                     </div>
                     
                     <transition name="fade">
                         <div v-show="showSessionDropdown" class="absolute top-full left-0 mt-3 w-80 bg-[#12121a]/95 backdrop-blur-2xl border border-indigo-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.7)] z-40 max-h-80 overflow-y-auto custom-scrollbar rounded-xl">
                             <div v-if="availableSessions.length === 0" class="p-5 text-center text-sm text-gray-400 font-medium">基站扫描中或无存量活跃数据...</div>
                             <div v-else>
-                                <div v-for="s in filteredSessions" :key="s.id" @click="selectSession(s)" class="p-4 hover:bg-indigo-500/20 cursor-pointer transition-all border-b border-white/5 last:border-0 flex justify-between items-center group">
+                                <button type="button" v-for="s in filteredSessions" :key="s.id" :disabled="mutationBusy" @pointerdown.prevent @click="selectSession(s)" class="w-full text-left p-4 hover:bg-indigo-500/20 cursor-pointer transition-all border-b border-white/5 last:border-0 flex justify-between items-center group">
                                     <div class="flex flex-col overflow-hidden">
                                         <span class="text-sm font-bold text-gray-200 group-hover:text-indigo-300 truncate">{{ s.id }}</span>
                                         <span class="text-xs text-indigo-200/50 mt-1 font-medium">{{ s.count }} 个活动线程检测到</span>
                                     </div>
                                     <i class="fa-solid fa-arrow-right text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-2 group-hover:translate-x-0 duration-300"></i>
-                                </div>
+                                </button>
                             </div>
                         </div>
                     </transition>
                 </div>
 
-                <button @click="fetchReminders" class="glass-panel px-6 py-3 hover:bg-white/10 transition-all hover:scale-105 active:scale-95 text-sm font-bold flex items-center gap-2 relative z-40 shadow-lg text-white">
+                <button :disabled="mutationBusy" @click="fetchReminders" class="glass-panel px-6 py-3 hover:bg-white/10 transition-all hover:scale-105 active:scale-95 text-sm font-bold flex items-center gap-2 relative z-40 shadow-lg text-white">
                     <i class="fa-solid fa-satellite-dish" :class="{'animate-pulse text-indigo-400': loading}"></i> 扫描网络
                 </button>
             </div>
         </header>
+
+        <p v-if="startupError" role="alert" class="glass-panel p-4 mb-6 text-red-300">{{ startupError }}</p>
+        <p v-if="loadError" role="alert" class="glass-panel p-4 mb-6 text-red-300">{{ loadError }}</p>
+        <p v-if="!loading && reminders.length && !deliveryStatusKnown" role="status" class="glass-panel p-4 mb-6 text-yellow-200">{{ t('deliveryUnavailable') }}</p>
 
         <!-- Dynamic User Tree (Admin View) -->
         <div v-if="currentSessionUsers.length > 0" class="mb-8 animate-fade-in" style="animation-delay: 0.05s">
@@ -59,7 +63,7 @@
             </h3>
             <div class="flex flex-wrap gap-2">
                 <button @click="selectedUserId = null" class="px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 border" :class="selectedUserId === null ? 'bg-indigo-500 text-white border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'">
-                    <i class="fa-solid fa-earth-asia mr-1"></i> 全网域
+                    <i class="fa-solid fa-earth-asia mr-1"></i> {{ t('allUsers') }}
                 </button>
                 <button v-for="u in currentSessionUsers" :key="u.id" @click="selectedUserId = u.id" class="px-4 py-2 rounded-full text-sm flex items-center gap-2 transition-all duration-300 border" :class="selectedUserId === u.id ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'">
                     <div class="w-5 h-5 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-[10px] text-white font-bold">{{ u.name ? u.name.charAt(0).toUpperCase() : '?' }}</div>
@@ -72,12 +76,12 @@
         <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-10 animate-fade-in" style="animation-delay: 0.1s">
             <div class="glass-panel p-6 flex flex-col justify-center items-center relative overflow-hidden group">
                 <div class="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                <div class="text-4xl font-bold mb-1">{{ reminders.length }}</div>
-                <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">监控总数</div>
+                <div class="text-4xl font-bold mb-1">{{ filteredReminders.length }}</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">{{ t('total') }}</div>
             </div>
             <div class="glass-panel p-6 flex flex-col justify-center items-center relative overflow-hidden group">
                 <div class="absolute inset-0 bg-gradient-to-br from-green-500/10 to-emerald-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                <div class="text-4xl font-bold mb-1 text-green-400">{{ activeCount }}</div>
+                <div class="text-4xl font-bold mb-1 text-green-400">{{ activeCount ?? '—' }}</div>
                 <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">活路中枢</div>
             </div>
             <div class="glass-panel p-6 flex flex-col justify-center items-center relative overflow-hidden group">
@@ -92,10 +96,10 @@
             </div>
         </div>
 
-        <section v-if="deliveryIssues.length" class="glass-panel p-6 mb-8 border-yellow-500/30" aria-label="待处理提醒投递">
-            <h2 class="text-xl font-semibold text-yellow-300 mb-2">待处理的提醒投递（{{ deliveryIssues.length }}）</h2>
+        <section v-if="filteredDeliveryIssues.length" class="glass-panel p-6 mb-8 border-yellow-500/30" aria-label="待处理提醒投递">
+            <h2 class="text-xl font-semibold text-yellow-300 mb-2">待处理的提醒投递（{{ filteredDeliveryIssues.length }}）</h2>
             <p class="text-sm text-gray-300 mb-5">“未确认”表示模型可能已经处理过；重试可能造成重复提醒或重复动作。</p>
-            <div v-for="issue in deliveryIssues" :key="issue.delivery_id" class="border-t border-white/10 py-4 flex flex-col md:flex-row md:items-center gap-4 justify-between">
+            <div v-for="issue in filteredDeliveryIssues" :key="issue.delivery_id" class="border-t border-white/10 py-4 flex flex-col md:flex-row md:items-center gap-4 justify-between">
                 <div class="min-w-0">
                     <p class="text-sm text-yellow-200">{{ issue.status === 'failed' ? '处理失败' : issue.status === 'awaiting_llm' ? '等待模型处理' : '结果未确认' }} · {{ issue.reminder?.time || '时间未知' }}</p>
                     <p class="break-words">{{ issue.reminder?.content || '无内容' }}</p>
@@ -103,8 +107,8 @@
                     <p v-if="issue.missed_count" class="text-xs text-gray-400">另有 {{ issue.missed_count }} 次周期触发待检查</p>
                 </div>
                 <div class="flex gap-2 shrink-0">
-                    <button v-if="issue.status !== 'awaiting_llm'" @click="reviewDelivery('retry', issue)" class="px-3 py-2 rounded-lg bg-yellow-500/15 hover:bg-yellow-500/25 text-yellow-200" aria-label="重试此提醒">重试</button>
-                    <button v-if="issue.status !== 'awaiting_llm'" @click="reviewDelivery('dismiss', issue)" class="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-gray-200" aria-label="忽略此次异常">忽略此次</button>
+                    <button :disabled="actionsDisabled" v-if="issue.status !== 'awaiting_llm'" @click="reviewDelivery('retry', issue)" class="px-3 py-2 rounded-lg bg-yellow-500/15 hover:bg-yellow-500/25 text-yellow-200" aria-label="重试此提醒">重试</button>
+                    <button :disabled="actionsDisabled" v-if="issue.status !== 'awaiting_llm'" @click="reviewDelivery('dismiss', issue)" class="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-gray-200" aria-label="忽略此次异常">忽略此次</button>
                 </div>
             </div>
         </section>
@@ -115,11 +119,12 @@
                 <i class="fa-solid fa-list-check text-indigo-400"></i> 行动清单
             </h2>
 
-            <div v-if="loading && reminders.length === 0" class="text-center py-24">
+            <div v-if="loading" class="text-center py-24">
                 <i class="fa-solid fa-circle-notch fa-spin text-5xl text-indigo-500 mb-6"></i>
-                <p class="text-gray-400 text-lg tracking-widest uppercase">Syncing memory banks...</p>
+                <p class="text-gray-400 text-lg tracking-widest uppercase">{{ t('loading') }}</p>
             </div>
             
+            <p v-else-if="loadError || startupError" class="text-center py-12 text-gray-300">{{ t('unavailable') }}</p>
             <div v-else-if="reminders.length === 0" class="text-center py-24 opacity-60">
                 <i class="fa-solid fa-satellite fa-bounce text-6xl mb-6 text-gray-600" style="--fa-animation-duration: 3s;"></i>
                 <p class="text-xl">当前侦测频段下属无活动数据</p>
@@ -151,14 +156,14 @@
                     </div>
 
                     <div class="flex items-center justify-end gap-3 md:opacity-0 md:group-hover:opacity-100 opacity-100 transition-opacity" style="opacity: 1;">
-                        <button v-if="!task.paused" @click="doAction('pause', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-yellow-500/20 hover:text-yellow-400 flex justify-center items-center transition-all hover:scale-110" title="暂停任务">
+                        <button :disabled="actionsDisabled" v-if="!task.paused" @click="doAction('pause', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-yellow-500/20 hover:text-yellow-400 flex justify-center items-center transition-all hover:scale-110" title="暂停任务">
                             <i class="fa-solid fa-pause"></i>
                         </button>
-                        <button v-else @click="doAction('resume', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-green-500/20 hover:text-green-400 flex justify-center items-center transition-all hover:scale-110" title="恢复任务">
+                        <button :disabled="actionsDisabled" v-else @click="doAction('resume', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-green-500/20 hover:text-green-400 flex justify-center items-center transition-all hover:scale-110" title="恢复任务">
                             <i class="fa-solid fa-play"></i>
                         </button>
                         
-                        <button @click="doAction('delete', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-400 flex justify-center items-center transition-all hover:scale-110" title="抹除任务">
+                        <button :disabled="actionsDisabled" @click="doAction('delete', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-400 flex justify-center items-center transition-all hover:scale-110" title="抹除任务">
                             <i class="fa-solid fa-trash-can"></i>
                         </button>
                     </div>
@@ -167,12 +172,12 @@
             </div>
         </div>
 
-        <!-- Confirm Modal for Important Deletion -->
+        <!-- In-page confirmation works inside the host's sandboxed iframe. -->
         <transition name="fade">
-            <div v-if="showConfirmModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-                <div class="glass-panel p-8 max-w-md w-full relative animate-fade-in shadow-2xl border-yellow-500/30">
+            <div v-if="showConfirmModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-[100] p-4">
+                <div ref="modalElement" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description" @keydown.esc.prevent.stop="closeModal" @keydown.tab="trapModalFocus" class="dialog-panel glass-panel p-8 max-w-md w-full relative animate-fade-in shadow-2xl border-yellow-500/30">
                     <div class="absolute top-4 right-4 flex gap-2">
-                        <button @click="closeModal" class="text-gray-400 hover:text-white transition-colors">
+                        <button :disabled="mutationBusy" :aria-label="t('close')" @click="closeModal" class="text-gray-400 hover:text-white transition-colors">
                             <i class="fa-solid fa-xmark text-xl"></i>
                         </button>
                     </div>
@@ -182,26 +187,27 @@
                             <i class="fa-solid fa-triangle-exclamation"></i>
                         </div>
                         <div>
-                            <h3 class="text-xl font-bold text-white">高危拦截请求</h3>
-                            <p class="text-sm text-yellow-400/80 mt-1">系统保护协议已触发</p>
+                            <h3 id="confirm-title" class="text-xl font-bold text-white">{{ confirmTitle }}</h3>
+                            <p class="text-sm text-yellow-400/80 mt-1 break-all">{{ pendingOperation?.sid }}</p>
                         </div>
                     </div>
                     
-                    <div class="bg-black/30 rounded-lg p-4 mb-6 text-gray-300 text-sm leading-relaxed border border-white/5">
+                    <div id="confirm-description" class="bg-black/30 rounded-lg p-4 mb-6 text-gray-300 text-sm leading-relaxed whitespace-pre-wrap break-words border border-white/5">
                         {{ confirmMessage }}
+                        <p v-if="pendingOperation?.content" class="mt-3 text-white">{{ pendingOperation.content }}</p>
                     </div>
                     
-                    <div class="mb-6">
-                        <label class="block text-xs text-gray-400 uppercase tracking-wider mb-2 font-semibold">输入解除令牌 (Token)</label>
-                        <input v-model="deleteToken" type="text" placeholder="例如: abc123def456" class="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-yellow-500/50 transition-colors" @keyup.enter="confirmDelete">
+                    <div v-if="needsDeleteToken" class="mb-6">
+                        <label for="delete-token" class="block text-xs text-gray-400 uppercase tracking-wider mb-2 font-semibold">{{ t('token') }}</label>
+                        <input id="delete-token" :disabled="mutationBusy" v-model="deleteToken" type="text" placeholder="Token" class="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-yellow-500/50 transition-colors" @keyup.enter="confirmDelete">
                     </div>
                     
                     <div class="flex gap-4">
-                        <button @click="closeModal" class="flex-1 py-3 px-4 rounded-lg bg-white/5 hover:bg-white/10 text-white font-medium transition-colors border border-white/10">
-                            放弃行动
+                        <button :disabled="mutationBusy" @click="closeModal" class="flex-1 py-3 px-4 rounded-lg bg-white/5 hover:bg-white/10 text-white font-medium transition-colors border border-white/10">
+                            {{ t('cancel') }}
                         </button>
-                        <button @click="confirmDelete" class="flex-1 py-3 px-4 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-400 font-bold transition-colors border border-red-500/30 flex justify-center items-center gap-2">
-                            <i class="fa-solid fa-skull"></i> 强制销毁
+                        <button :disabled="actionsDisabled" @click="confirmDelete" class="flex-1 py-3 px-4 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-400 font-bold transition-colors border border-red-500/30 flex justify-center items-center gap-2">
+                            {{ confirmButton }}
                         </button>
                     </div>
                 </div>
@@ -209,20 +215,22 @@
         </transition>
 
         <!-- Toast Notifications -->
-        <div class="fixed bottom-6 right-6 flex flex-col gap-3 z-50">
+        <div aria-live="polite" class="fixed bottom-6 left-4 right-4 md:left-auto flex flex-col gap-3 z-[110]">
             <transition-group name="list">
-                <div v-for="toast in toasts" :key="toast.id" class="glass-panel px-6 py-4 flex items-center gap-4 shadow-2xl transform transition-all duration-300 min-w-[300px]" :class="toast.type === 'error' ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-emerald-500'">
+                <div v-for="toast in toasts" :key="toast.id" class="glass-panel px-6 py-4 flex items-center gap-4 shadow-2xl transform transition-all duration-300 w-full max-w-sm" :class="toast.type === 'error' ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-emerald-500'">
                     <i v-if="toast.type === 'error'" class="fa-solid fa-triangle-exclamation text-red-500 text-2xl"></i>
                     <i v-else class="fa-solid fa-shield-check text-emerald-500 text-2xl"></i>
                     <div>
                         <p class="font-bold text-sm tracking-wide">{{ toast.title }}</p>
-                        <p class="text-xs text-gray-400 mt-1">{{ toast.message }}</p>
+                        <p class="text-xs text-gray-400 mt-1 break-words">{{ toast.message }}</p>
                     </div>
                 </div>
             </transition-group>
         </div>
     </div>
 
+    <p id="startup-fallback" role="status">正在加载提醒页面；若长时间停留，请检查网络并刷新。<br>Loading reminders; if this persists, check the network and refresh.</p>
+    <script src="./i18n.js"></script>
     <script src="./app.js"></script>
 </body>
 </html>

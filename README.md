@@ -31,7 +31,7 @@
 - 🌐 **主 WebUI 侧边栏看板**：基于 KiraAI `v2.23.0` 插件页面注册能力，入口为主 WebUI 左侧 `提醒 / Reminders`，统一走主 WebUI 认证与插件 API。
 - ⚡ **无延迟极速指令**：内置类 CLI 命令解析器（如 `/r add`），绕过 LLM 思考过程，毫秒级响应您的增删改查。
 - 🛡️ **防误删与越权保护**：
-  - 全局超管（上帝视角）可指令级透视全域用户数据 `/r all`。
+  - 聊天管理员按适配器授权，可通过 `/r all` 查看当前会话中其他用户的提醒；已认证 WebUI 保留部署管理权限。
   - 重要提醒（⭐）被大模型试图删除时，强制下发 Token 令牌进行二次安全确认。
 - 💾 **数据与调度保护**：JSON 文件采用同进程异步锁与原子替换；调度器健康检查会尝试重启。事件发布失败最多尝试 3 次，间隔固定为 5 秒。模型响应失败、超时或进程中断不会被误报为确认成功；仍需留意平台消息发送属于独立链路。
 
@@ -50,6 +50,7 @@ KiraAI/
                 ├── config.py
                 ├── models.py
                 ├── storage.py
+                ├── migration.py
                 ├── time_utils.py
                 ├── reminder_service.py
                 ├── scheduler.py
@@ -63,6 +64,7 @@ KiraAI/
                 ├── web/
                 │    ├── index.html
                 │    ├── app.js
+                │    ├── i18n.js
                 │    └── style.css
                 └── tests/
                      ├── test_contracts.py
@@ -71,13 +73,15 @@ KiraAI/
                      ├── test_delivery.py
                      ├── test_autonomy.py
                      ├── test_identity_permissions.py
+                     ├── test_adapter_identity.py
                      └── test_storage_migration.py
 ```
 
 ### 2. 参数选配 (schema.json)
 重启节点或在管理面加载本插件后，可配置以下进阶项：
-- `admin_users`：超级管理员账号/QQ 数组录入。
-- `authorized_users`：额外允许在群聊中创建提醒的用户账号/ID 数组。
+- `admin_users`：聊天管理员列表，一行一个 `适配器名称:用户ID`，例如 `QQ:123456`；仅在对应适配器内具有管理员权限。
+- `authorized_users`：额外允许在群聊中创建提醒的用户列表，同样使用 `适配器名称:用户ID`。
+- `legacy_acl_adapter`：旧裸 ID 权限的归属适配器，例如 `QQ`。仅配置一个适配器时首次加载会备份并固定归属；配置多个适配器（包括停用的）时须手动指定，或把旧列表改成带适配器的格式。空值不授予裸 ID 全局权限。
 - `group_create_policy`：群聊提醒创建策略，可选 `admin_only`、`mentioned_user` 或 `all`（all 表示群聊所有成员均可创建，是否合理交由 LLM 行为准则把控）。
 - `action_policy`：独立的自动动作权限策略，可选 `admin_only`、`admin_and_trusted_bot` 或 `all`；默认不会因为开启群聊 `all` 而同步开放高风险 action。
 - `autonomy_enabled` / `allowed_sessions`：自主意图循环总开关与会话白名单。
@@ -86,6 +90,10 @@ KiraAI/
 - `advanced_config.usage_prompt`：注入 LLM 请求的插件使用提示词，用于指导模型何时调用提醒工具。
 
 升级到 v2.2.0 时，旧提醒会幂等迁移到 identity schema v2。首次迁移前会在插件数据目录生成 `reminders.pre-v2.2.backup.json`；无法恢复所有者的群聊旧记录仅管理员可见和管理。
+
+当前身份隔离改进使用 identity schema v3：用户身份按“适配器名称＋用户 ID”区分，同号不自动合并，适配器名称区分大小写且须与会话 ID 前缀一致。旧提醒和投递记录中的提醒快照会在加载时同步迁移，保留原有所有者、内容和调度信息。首次迁移前分别生成 `reminders.pre-identity-v3.backup.json` 和 `delivery_state.pre-identity-v3.backup.json`（对应文件有待迁移记录时）；旧备份不覆盖。自动绑定旧权限时，配置目录会生成 `reminder_plugin.pre-adapter-acl.backup.json`。
+
+迁移任一文件失败会停止插件初始化，不启动调度器；修复读取或写入问题后重新加载可幂等完成迁移。此阶段不修改主项目或运行时 LLM 缓存，也尚未实现多人合批的按需来源 Tool／待确认请求；完整边界及后续验收见 `docs/GROUP_IDENTITY_PLAN.md`。
 
 如果 `reminders.json`、`autonomous_state.json` 或新增的 `delivery_state.json` 已存在但无法读取、JSON 不完整或顶层不是对象，插件会报错并保留原文件，不再把它当作空数据写回。遇到此错误时，先关闭 KiraAI，备份异常文件，再检查权限或从可信备份恢复；不要直接删除或清空原文件。文件确实不存在时仍按首次使用处理。
 
@@ -101,7 +109,11 @@ KiraAI/
 
 安装并重启 KiraAI 后，可在主 WebUI 左侧侧边栏进入：`提醒 / Reminders`。
 
-`web/index.html` 从同目录加载 `app.js` 和 `style.css`；`app.js` 仍使用主 WebUI 注入的 `window.PluginPageContext` 调用插件 API。页面资源不需要额外注册静态路由。
+`web/index.html` 从同目录加载 `i18n.js`、`app.js` 和 `style.css`；`app.js` 仍使用主 WebUI 注入的 `window.PluginPageContext` 调用插件 API。页面资源不需要额外注册静态路由。
+
+重试投递、忽略此次异常和删除提醒使用页面内确认框，兼容主 WebUI 的 iframe 沙箱。重要提醒仍须完成后端令牌确认。提交时禁用重复操作；切换会话后清空旧列表，须重新加载后才能操作。读取失败不会被当作“没有提醒”；提交结果不明时需先刷新核对，不自动重复提交。
+
+前端检查记录与剩余改进项见 [前端检查记录](docs/FRONTEND_REVIEW.md)。新增提示文案的中英文在插件内维护，不修改主项目翻译文件。
 
 对应页面与接口路径：
 
@@ -156,6 +168,15 @@ KiraAI/
 ---
 
 ## 🤝 参与贡献
+
+插件回归测试（在插件目录执行）：
+
+```bash
+python -m pytest tests/ -q
+node --test tests/test_dashboard.js
+```
+
+前端测试使用 Node 内置测试框架，无需安装 npm 依赖。可用 `python tests/dashboard_server.py --port 0` 启动隔离浏览器测试页面；它只在本机监听，使用内存测试数据和模拟接口，不连接 Kira 或 LLM。按 Ctrl+C 停止测试服务器。
 
 该生态插件属于不断演进中的版本，欢迎提出 Issue 或者提交 Pull Request (PR) 来增加新的特性！
 

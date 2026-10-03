@@ -1,4 +1,4 @@
-const { createApp, ref, computed, onMounted } = Vue
+const { createApp, ref, computed, watch, onMounted, onUnmounted, nextTick } = Vue
 
 createApp({
     setup() {
@@ -8,6 +8,21 @@ createApp({
         const deliveryIssues = ref([])
         const toasts = ref([])
         const pluginContext = ref(null)
+        const locale = ref('zh')
+        const loadedSessionId = ref('')
+        const mutationBusy = ref(false)
+        const loadError = ref('')
+        const deliveryStatusKnown = ref(false)
+        const startupError = ref('')
+        let requestSequence = 0
+        let toastSequence = 0
+        let unsubscribeContext = null
+        let disposed = false
+        const timers = new Set()
+        const t = (key) => {
+            const messages = window.ReminderDashboardMessages
+            return messages?.[locale.value]?.[key] || messages?.zh?.[key] || key
+        }
 
         // Form state
         const sessionId = ref('')
@@ -28,6 +43,7 @@ createApp({
         })
 
         const selectSession = (s) => {
+            if (mutationBusy.value) return
             sessionId.value = s.id
             selectedUserId.value = null // Reset the user filter.
             showSessionDropdown.value = false
@@ -37,32 +53,60 @@ createApp({
         // Modal state
         const showConfirmModal = ref(false)
         const confirmMessage = ref('')
-        const currentJobId = ref('')
         const deleteToken = ref('')
+        const pendingOperation = ref(null)
+        const modalElement = ref(null)
+        let previousFocus = null
+        const needsDeleteToken = computed(() => pendingOperation.value?.kind === 'token')
+        const confirmTitle = computed(() => t(needsDeleteToken.value ? 'tokenTitle'
+            : pendingOperation.value?.kind === 'delivery' ? `${pendingOperation.value.decision}Title` : 'deleteTitle'))
+        const confirmButton = computed(() => mutationBusy.value ? t('submitting')
+            : t(pendingOperation.value?.decision || 'delete'))
+        const dataReady = computed(() => !loading.value && !!loadedSessionId.value
+            && loadedSessionId.value === sessionId.value.trim())
+        const actionsDisabled = computed(() => !dataReady.value || mutationBusy.value)
 
         // Counts reflect the filtered view.
         const pendingJobIds = computed(() => new Set(deliveryIssues.value.map(issue => issue.job_id)))
-        const activeCount = computed(() => filteredReminders.value.filter(r => !r.paused && !pendingJobIds.value.has(r.job_id)).length)
+        const activeCount = computed(() => deliveryStatusKnown.value
+            ? filteredReminders.value.filter(r => !r.paused && !pendingJobIds.value.has(r.job_id)).length : null)
         const pausedCount = computed(() => filteredReminders.value.filter(r => r.paused).length)
         const importantCount = computed(() => filteredReminders.value.filter(r => r.important).length)
 
         // Derived computing
         const currentSessionUsers = computed(() => {
             const s = availableSessions.value.find(s => s.id === sessionId.value)
-            return s ? s.users || [] : []
+            return s && Array.isArray(s.users) ? s.users : []
         })
 
         const filteredReminders = computed(() => {
             if (!selectedUserId.value) return reminders.value
             return reminders.value.filter(r => r.creator_id === selectedUserId.value)
         })
+        const filteredDeliveryIssues = computed(() => selectedUserId.value === null ? deliveryIssues.value
+            : deliveryIssues.value.filter(issue =>
+                (issue.reminder?.owner_id || issue.reminder?.creator_id) === selectedUserId.value))
+
+        watch(sessionId, () => {
+            requestSequence += 1
+            loadedSessionId.value = ''
+            reminders.value = []
+            deliveryIssues.value = []
+            selectedUserId.value = null
+            deliveryStatusKnown.value = false
+            loadError.value = ''
+            loading.value = false
+            closeModal(true)
+        }, { flush: 'sync' })
 
         const showToast = (title, message, type = 'success') => {
-            const id = Date.now()
+            const id = ++toastSequence
             toasts.value.push({ id, title, message, type })
-            setTimeout(() => {
+            const timer = setTimeout(() => {
+                timers.delete(timer)
                 toasts.value = toasts.value.filter(t => t.id !== id)
             }, 4000)
+            timers.add(timer)
         }
 
         const pluginApi = () => {
@@ -72,118 +116,181 @@ createApp({
             return window.PluginPageContext.api
         }
 
-        const fetchReminders = async () => {
-            showSessionDropdown.value = false
+        const responseData = (data, list = false) => {
+            if (!data || !['ok', 'error'].includes(data.status)) {
+                throw new Error(typeof data?.detail === 'string' ? data.detail : t('invalidResponse'))
+            }
+            if (data.status === 'error') throw new Error(data.msg || t('invalidResponse'))
+            if (list && (!Array.isArray(data.data) || data.data.some(item => !item || typeof item !== 'object'))) {
+                throw new Error(t('invalidResponse'))
+            }
+            return list ? data.data : data
+        }
 
-            if (!sessionId.value.trim()) {
+        const readApi = async (endpoint, params) => {
+            let timer
+            try {
+                return await Promise.race([
+                    pluginApi().get(endpoint, params),
+                    new Promise((_, reject) => {
+                        timer = setTimeout(() => reject(new Error(t('readTimeout'))), 12000)
+                        timers.add(timer)
+                    }),
+                ])
+            } finally {
+                clearTimeout(timer)
+                timers.delete(timer)
+            }
+        }
+
+        const fetchReminders = async (allowDuringMutation = false) => {
+            if (mutationBusy.value && allowDuringMutation !== true) return
+            showSessionDropdown.value = false
+            const sid = sessionId.value.trim()
+            if (!sid) {
                 reminders.value = [] // Clear stale results on invalid input.
                 deliveryIssues.value = []
                 return showToast('参数校验失败', '必须提供目标频率基站 (Session ID)', 'error')
             }
+            if (sessionId.value !== sid) sessionId.value = sid
+            const sequence = ++requestSequence
+            const isCurrent = () => sequence === requestSequence && sid === sessionId.value.trim()
             loading.value = true
+            loadedSessionId.value = ''
+            reminders.value = []
+            deliveryIssues.value = []
+            deliveryStatusKnown.value = false
+            loadError.value = ''
             try {
-                const data = await pluginApi().get(`reminders/${encodeURIComponent(sessionId.value)}`, { _t: Date.now() })
-                if (data.status === 'ok') {
-                    reminders.value = data.data
-                    await fetchDeliveryIssues()
-                } else {
-                    reminders.value = [] // Clear data when access is denied.
-                    deliveryIssues.value = []
-                    showToast('越权或拦截', data.msg, 'error')
-                }
+                const data = await readApi(`reminders/${encodeURIComponent(sid)}`, { _t: Date.now() })
+                if (!isCurrent()) return
+                reminders.value = responseData(data, true)
+                loadedSessionId.value = sid
+                await fetchDeliveryIssues(sid, isCurrent)
             } catch (e) {
+                if (!isCurrent()) return
                 reminders.value = [] // Clear stale data after a connection failure.
                 deliveryIssues.value = []
-                showToast('链路断开', '无法握手微服务子节点', 'error')
+                loadError.value = e.message || t('unavailable')
+                showToast(t('operationFailed'), loadError.value, 'error')
             } finally {
-                loading.value = false
+                if (isCurrent()) loading.value = false
             }
         }
 
-        const fetchDeliveryIssues = async () => {
+        const fetchDeliveryIssues = async (sid, isCurrent) => {
             try {
-                const data = await pluginApi().get(`deliveries/${encodeURIComponent(sessionId.value)}`, { _t: Date.now() })
-                if (data.status === 'ok') {
-                    deliveryIssues.value = data.data
-                } else {
-                    deliveryIssues.value = []
-                    showToast('投递状态读取失败', data.msg, 'error')
-                }
+                const data = await readApi(`deliveries/${encodeURIComponent(sid)}`, { _t: Date.now() })
+                if (!isCurrent()) return
+                deliveryIssues.value = responseData(data, true)
+                deliveryStatusKnown.value = true
             } catch (e) {
+                if (!isCurrent()) return
                 deliveryIssues.value = []
-                showToast('投递状态读取失败', e.message, 'error')
+                showToast(t('deliveryUnavailable'), e.message, 'error')
             }
         }
 
-        const reviewDelivery = async (decision, issue) => {
-            if (decision === 'retry' || decision === 'dismiss') {
-                const warning = decision === 'retry'
-                    ? '模型可能已经处理过这条提醒。确定要再次交给模型吗？带动作的提醒可能重复执行。'
-                    : '确定将这次投递标记为无需补救吗？一次性提醒将从待办中移除。'
-                if (!window.confirm(warning)) return
-            }
-            try {
-                const data = await pluginApi().post(`deliveries/${decision}`, {
-                    session_id: sessionId.value,
-                    delivery_id: issue.delivery_id
-                })
-                showToast(data.status === 'ok' ? '处理决定已记录' : '处理失败', data.msg,
-                    data.status === 'ok' ? 'success' : 'error')
-                if (data.status === 'ok') await fetchReminders()
-            } catch (e) {
-                showToast('处理失败', e.message, 'error')
-            }
+        const openModal = (operation, message) => {
+            previousFocus = document.activeElement
+            pendingOperation.value = Object.freeze(operation)
+            confirmMessage.value = message
+            deleteToken.value = ''
+            showConfirmModal.value = true
+            nextTick(() => modalElement.value?.querySelector('button')?.focus())
         }
 
-        const doAction = async (action, jobId, force = true) => {
+        const reviewDelivery = (decision, issue) => {
+            if (actionsDisabled.value) return
+            const current = deliveryIssues.value.find(item => item.delivery_id === issue?.delivery_id)
+            if (!['retry', 'dismiss'].includes(decision) || !current || !current.delivery_id
+                || current.status === 'awaiting_llm') {
+                return showToast(t('operationFailed'), t('invalidTarget'), 'error')
+            }
+            openModal({kind: 'delivery', decision, sid: loadedSessionId.value,
+                deliveryId: current.delivery_id, content: current.reminder?.content || ''}, t(`${decision}Warning`))
+        }
+
+        const runMutation = async (endpoint, payload) => {
+            if (actionsDisabled.value || payload.session_id !== loadedSessionId.value) return
+            mutationBusy.value = true
             try {
-                const data = await pluginApi().post(`reminders/${action}`, {
-                    session_id: sessionId.value,
-                    job_id: jobId,
-                    force: force
-                })
+                const data = await pluginApi().post(endpoint, payload)
+                if (disposed) return
+                if (!data || !['ok', 'error'].includes(data.status)) throw new Error(t('invalidResponse'))
                 if (data.status === 'ok') {
-                    showToast('指令下达成功', data.msg)
-                    await fetchReminders() // reload
+                    closeModal(true)
+                    const message = sessionId.value.trim() === payload.session_id ? data.msg
+                        : `${payload.session_id}: ${data.msg || ''}`
+                    showToast(endpoint.startsWith('deliveries/') ? t('saved') : t('taskSaved'), message || '')
+                    if (sessionId.value.trim() === payload.session_id) await fetchReminders(true)
                 } else {
-                    if (data.msg.includes('⚠') || data.msg.includes('请确认删除令牌')) {
-                        // Keep the rejection reason compact in the confirmation dialog.
-                        confirmMessage.value = data.msg.replace(/\\n/g, '  ')
-                        currentJobId.value = jobId
-                        deleteToken.value = '' // reset input
-                        showConfirmModal.value = true
+                    const message = typeof data.msg === 'string' ? data.msg : t('invalidResponse')
+                    if (endpoint === 'reminders/delete' && message.includes('请确认删除令牌')
+                        && sessionId.value.trim() === payload.session_id) {
+                        openModal({kind: 'token', sid: payload.session_id, jobId: payload.job_id}, message)
                     } else {
-                        showToast('防火墙阻断', data.msg, 'error')
+                        showToast(t('operationFailed'), message, 'error')
                     }
                 }
             } catch (e) {
-                showToast('网络波动', e.message, 'error')
+                closeModal(true)
+                loadedSessionId.value = ''
+                loadError.value = t('unknownOutcome')
+                showToast(t('operationFailed'), `${t('unknownOutcome')} ${e.message || ''}`, 'error')
+            } finally {
+                mutationBusy.value = false
             }
         }
 
-        const closeModal = () => {
+        const doAction = async (action, jobId) => {
+            if (actionsDisabled.value) return
+            const task = reminders.value.find(item => item.job_id === jobId)
+            if (!['delete', 'pause', 'resume'].includes(action) || !task || !jobId) {
+                return showToast(t('operationFailed'), t('invalidTarget'), 'error')
+            }
+            const sid = loadedSessionId.value
+            if (action === 'delete') {
+                return openModal({kind: 'delete', sid, jobId, content: task.content}, t('deleteWarning'))
+            }
+            await runMutation(`reminders/${action}`, {session_id: sid, job_id: jobId})
+        }
+
+        const closeModal = (force = false) => {
+            if (mutationBusy.value && force !== true) return
             showConfirmModal.value = false
+            pendingOperation.value = null
+            deleteToken.value = ''
+            nextTick(() => { if (previousFocus?.isConnected) previousFocus.focus() })
         }
 
         const confirmDelete = async () => {
+            const operation = pendingOperation.value
+            if (!operation || actionsDisabled.value || operation.sid !== loadedSessionId.value) return
+            if (operation.kind === 'delivery') {
+                return runMutation(`deliveries/${operation.decision}`, {
+                    session_id: operation.sid, delivery_id: operation.deliveryId,
+                })
+            }
+            if (operation.kind === 'delete') {
+                return runMutation('reminders/delete', {
+                    session_id: operation.sid, job_id: operation.jobId, force: false,
+                })
+            }
             if (!deleteToken.value.trim()) {
                 return showToast('校验失败', '请输入防御解除令牌', 'warning')
             }
-            try {
-                const data = await pluginApi().post('reminders/confirm-delete', {
-                    session_id: sessionId.value,
-                    confirm_token: deleteToken.value.trim()
-                })
-                if (data.status === 'ok') {
-                    closeModal()
-                    showToast('确认成功', data.msg)
-                    await fetchReminders()
-                } else {
-                    showToast('令牌校验失败', data.msg, 'error')
-                }
-            } catch (e) {
-                showToast('网络波动', e.message, 'error')
-            }
+            await runMutation('reminders/confirm-delete', {
+                session_id: operation.sid, confirm_token: deleteToken.value.trim(),
+            })
+        }
+
+        const trapModalFocus = (event) => {
+            const controls = modalElement.value?.querySelectorAll('button:not(:disabled), input:not(:disabled)')
+            if (!controls?.length) return
+            const first = controls[0], last = controls[controls.length - 1]
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+            if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
         }
 
         const formatRepeat = (repeat, interval) => {
@@ -200,22 +307,37 @@ createApp({
 
         const fetchSessions = async () => {
             try {
-                const data = await pluginApi().get('sessions', { _t: Date.now() })
-                if (data.status === 'ok') {
-                    availableSessions.value = data.data
-                }
+                const data = await readApi('sessions', { _t: Date.now() })
+                availableSessions.value = responseData(data, true).filter(session => typeof session.id === 'string')
             } catch (e) {
-                console.error("[KiraAI] 无法拉取存量会话列表", e)
+                showToast(t('sessionFailed'), e.message, 'error')
             }
         }
 
         // Initial fetch
         onMounted(async () => {
-            if (window.PluginPageContext) {
-                pluginContext.value = await window.PluginPageContext.ready()
-            } else {
-                showToast('上下文缺失', '请从 KiraAI WebUI 侧边栏打开本页面', 'error')
+            const fallback = document.getElementById('startup-fallback')
+            if (fallback) fallback.hidden = true
+            let contextTimer
+            try {
+                if (!window.PluginPageContext) throw new Error(t('contextFailed'))
+                pluginContext.value = await Promise.race([
+                    window.PluginPageContext.ready(),
+                    new Promise((_, reject) => {
+                        contextTimer = setTimeout(() => reject(new Error(t('contextTimeout'))), 8000)
+                        timers.add(contextTimer)
+                    }),
+                ])
+                if (disposed) return
+                const updateLocale = context => { locale.value = String(context?.locale || 'zh').startsWith('en') ? 'en' : 'zh' }
+                updateLocale(pluginContext.value)
+                if (window.PluginPageContext.onContext) unsubscribeContext = window.PluginPageContext.onContext(updateLocale)
+            } catch (e) {
+                startupError.value = e.message || t('contextFailed')
                 return
+            } finally {
+                clearTimeout(contextTimer)
+                timers.delete(contextTimer)
             }
 
             fetchSessions()
@@ -228,15 +350,24 @@ createApp({
             }
         })
 
+        onUnmounted(() => {
+            disposed = true
+            requestSequence += 1
+            for (const timer of timers) clearTimeout(timer)
+            unsubscribeContext?.()
+        })
+
         return {
-            loading, reminders, deliveryIssues, pendingJobIds, toasts, availableSessions,
+            loading, reminders, deliveryIssues, filteredDeliveryIssues, pendingJobIds, toasts, availableSessions,
             sessionId, selectedUserId, currentSessionUsers, filteredReminders,
             showSessionDropdown,
             filteredSessions,
             selectSession,
             activeCount, pausedCount, importantCount,
             fetchReminders, doAction, reviewDelivery, formatRepeat,
-            showConfirmModal, confirmMessage, deleteToken, closeModal, confirmDelete
+            showConfirmModal, confirmMessage, deleteToken, closeModal, confirmDelete,
+            pendingOperation, needsDeleteToken, confirmTitle, confirmButton, modalElement, trapModalFocus,
+            mutationBusy, actionsDisabled, loadError, deliveryStatusKnown, startupError, t
         }
     }
 }).mount('#app')
