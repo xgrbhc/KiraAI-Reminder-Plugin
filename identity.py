@@ -121,15 +121,17 @@ def _safe_origin(value: Any) -> Optional[EventOrigin]:
         return None
 
 
-def _event_messages(event: Any) -> list[Any]:
+def event_messages(event: Any) -> list[Any]:
     messages = getattr(event, "messages", None)
     if isinstance(messages, list) and messages:
         return messages
+    if isinstance(messages, tuple) and messages:
+        return list(messages)
     message = getattr(event, "message", None)
     return [message] if message is not None else []
 
 
-def _event_sid(event: Any) -> str:
+def event_session_id(event: Any) -> str:
     sid = getattr(event, "sid", "")
     if sid:
         return str(sid)
@@ -137,14 +139,14 @@ def _event_sid(event: Any) -> str:
     return str(getattr(session, "sid", "") or "")
 
 
-def _event_adapter_name(event: Any) -> str:
+def event_adapter_name(event: Any) -> str:
     adapter = getattr(event, "adapter", None)
     name = getattr(adapter, "name", "")
     if name:
         return normalize_adapter_name(name)
     session = getattr(event, "session", None)
     name = getattr(session, "adapter_name", "")
-    return normalize_adapter_name(name) or adapter_from_session_id(_event_sid(event))
+    return normalize_adapter_name(name) or adapter_from_session_id(event_session_id(event))
 
 
 def _event_bot_id(event: Any, messages: list[Any]) -> str:
@@ -212,8 +214,8 @@ class IdentityResolver:
         }
 
     def resolve(self, event: Any) -> PrincipalContext:
-        messages = _event_messages(event)
-        session_id = _event_sid(event)
+        messages = event_messages(event)
+        session_id = event_session_id(event)
         bot_id = _event_bot_id(event, messages)
         extra = _event_extra(event, messages)
         payload = extra.get(ENVELOPE_NAMESPACE)
@@ -244,7 +246,7 @@ class IdentityResolver:
                     trusted=True,
                     delegated_owner_id=str(payload.get("delegated_owner_id") or ""),
                     delivery_id=str(payload.get("delivery_id") or ""),
-                    adapter_name=_event_adapter_name(event),
+                    adapter_name=event_adapter_name(event),
                 )
 
         user_id, nickname = _event_sender(messages)
@@ -262,7 +264,7 @@ class IdentityResolver:
             session_id=session_id,
             bot_id=bot_id,
             trusted=False,
-            adapter_name=_event_adapter_name(event),
+            adapter_name=event_adapter_name(event),
         )
 
 

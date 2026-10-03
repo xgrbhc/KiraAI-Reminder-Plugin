@@ -57,6 +57,7 @@ KiraAI/
                 ├── delivery.py
                 ├── autonomy.py
                 ├── identity.py
+                ├── message_sources.py
                 ├── permissions.py
                 ├── schema.json
                 ├── manifest.json
@@ -74,6 +75,7 @@ KiraAI/
                      ├── test_autonomy.py
                      ├── test_identity_permissions.py
                      ├── test_adapter_identity.py
+                     ├── test_message_sources.py
                      └── test_storage_migration.py
 ```
 
@@ -93,7 +95,11 @@ KiraAI/
 
 当前身份隔离改进使用 identity schema v3：用户身份按“适配器名称＋用户 ID”区分，同号不自动合并，适配器名称区分大小写且须与会话 ID 前缀一致。旧提醒和投递记录中的提醒快照会在加载时同步迁移，保留原有所有者、内容和调度信息。首次迁移前分别生成 `reminders.pre-identity-v3.backup.json` 和 `delivery_state.pre-identity-v3.backup.json`（对应文件有待迁移记录时）；旧备份不覆盖。自动绑定旧权限时，配置目录会生成 `reminder_plugin.pre-adapter-acl.backup.json`。
 
-迁移任一文件失败会停止插件初始化，不启动调度器；修复读取或写入问题后重新加载可幂等完成迁移。此阶段不修改主项目或运行时 LLM 缓存，也尚未实现多人合批的按需来源 Tool／待确认请求；完整边界及后续验收见 `docs/GROUP_IDENTITY_PLAN.md`。
+迁移任一文件失败会停止插件初始化，不启动调度器；修复读取或写入问题后重新加载可幂等完成迁移。本轮不修改主项目或运行时 LLM 缓存；按需来源 Tool 已实现，跨轮待确认请求尚未实现。完整边界及后续验收见 `docs/GROUP_IDENTITY_PLAN.md`。
+
+多人或不同来源上下文合批时，LLM 可按需调用 `list_message_sources` 获取临时来源标记，再通过 `set_reminder(source_ref=...)` 为对应用户创建无 `action` 的普通个人提醒。标记只对当前批次有效，不授予权限；查询只读当前消息，不改写历史。单一用户且相同来源上下文仍可直接创建。
+
+批次中的潜在用户来源须全部通过当前创建策略；混有无权限用户、缺失身份或内部事件时不自动创建。多人查看、修改、删除和 `action` 仍需确认，目前返回拒绝说明，可让对应用户单独提出；不能把临时标记或 LLM 自报“已确认”当成授权。跨轮确认流程将在下一阶段实现。
 
 如果 `reminders.json`、`autonomous_state.json` 或新增的 `delivery_state.json` 已存在但无法读取、JSON 不完整或顶层不是对象，插件会报错并保留原文件，不再把它当作空数据写回。遇到此错误时，先关闭 KiraAI，备份异常文件，再检查权限或从可信备份恢复；不要直接删除或清空原文件。文件确实不存在时仍按首次使用处理。
 
@@ -155,7 +161,8 @@ KiraAI/
 
 作为智能体的“海马体”，AI 可通过以下 `Function Calling` 自主操纵系统：
 
-- 🛠 `set_reminder`：注册含有 `action` 联想、`category` 等高级元标记的复合提醒。
+- 🛠 `list_message_sources`：按需读取当前批次的昵称、消息片段及临时来源标记；无提醒需求时不必调用，返回量有界。
+- 🛠 `set_reminder`：注册含有 `action` 联想、`category` 等高级元标记的复合提醒；多人普通创建需有效 `source_ref` 并通过批次权限检查。
 - 🛠 `list_reminders`：探查时间环境以支撑模型作出决策。
 - 🛠 `delete_reminder` / `confirm_delete_reminder`：处理带 `令牌二次认证` 的关键节点删除流。
 - 🛠 `mark_reminder_important` / `unmark_reminder_important`：感知到高价值日程自动加注⭐。

@@ -21,6 +21,7 @@ from conftest import attach_delivery
 
 
 TOOL_NAMES = {
+    "list_message_sources",
     "set_reminder",
     "list_reminders",
     "delete_reminder",
