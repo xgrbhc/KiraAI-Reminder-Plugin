@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Collection, Mapping
 
-from .identity import PrincipalContext, PrincipalKind
+from .identity import PrincipalContext, PrincipalKind, adapter_from_session_id
 
 
 class ReminderOperation(str, Enum):
@@ -23,11 +23,19 @@ BOT_SESSION_MEMBER_OPERATIONS = frozenset(
 def is_admin(principal: PrincipalContext, admin_users: Collection[str]) -> bool:
     if principal.trusted and principal.kind is PrincipalKind.WEB:
         return True
-    return principal.kind is PrincipalKind.USER and principal.principal_id in admin_users
+    return (
+        principal.kind is PrincipalKind.USER
+        and bool(principal.scoped_user_id)
+        and principal.scoped_user_id in admin_users
+    )
 
 
 def is_authorized(principal: PrincipalContext, authorized_users: Collection[str]) -> bool:
-    return principal.kind is PrincipalKind.USER and principal.principal_id in authorized_users
+    return (
+        principal.kind is PrincipalKind.USER
+        and bool(principal.scoped_user_id)
+        and principal.scoped_user_id in authorized_users
+    )
 
 
 def can_create_reminder(
@@ -49,7 +57,7 @@ def can_create_reminder(
             "reminder.create" in principal.capabilities
             and autonomy_mode in {"plan_only", "act_with_confirm", "trusted_admin"}
         )
-    if principal.kind is not PrincipalKind.USER:
+    if principal.kind is not PrincipalKind.USER or not principal.adapter_scope:
         return False
     if not is_group:
         return True
@@ -70,7 +78,7 @@ def can_set_action(
     if is_admin(principal, admin_users):
         return True
     if action_policy == "all":
-        if principal.kind is PrincipalKind.USER:
+        if principal.kind is PrincipalKind.USER and principal.adapter_scope:
             return True
         if (
             principal.trusted
@@ -112,6 +120,16 @@ def can_manage_reminder(
     sid: str,
     admin_users: Collection[str],
 ) -> bool:
+    if principal.trusted and principal.kind is PrincipalKind.WEB:
+        return True
+    target_adapter = adapter_from_session_id(sid)
+    owner_adapter = str(reminder.get("owner_adapter_name", target_adapter) or "")
+    if (
+        not target_adapter
+        or principal.adapter_scope != target_adapter
+        or owner_adapter != target_adapter
+    ):
+        return False
     if is_admin(principal, admin_users):
         return True
     if (

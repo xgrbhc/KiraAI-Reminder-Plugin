@@ -20,6 +20,9 @@ class ReminderRecord(TypedDict, total=False):
     session_type: str
     owner_type: str
     owner_id: str
+    identity_schema: int
+    owner_adapter_name: str
+    created_by_adapter_name: str
     category: str
     action: str
     interval_minutes: int

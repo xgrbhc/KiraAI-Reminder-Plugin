@@ -4,6 +4,8 @@ from typing import List
 
 from pydantic import BaseModel, Field, field_validator
 
+from .identity import normalize_adapter_name
+
 
 DEFAULT_USAGE_PROMPT = (
     "你拥有时间驱动的提醒、待办和任务编排能力，这是你自身能力的一部分，不要把它描述成外部插件。\n\n"
@@ -80,9 +82,26 @@ def flatten_config(cfg: dict) -> dict:
     return merged
 
 
+def scoped_acl_entries(entries: List[str], legacy_adapter: str = "") -> frozenset[str]:
+    """Resolve explicit scopes; bare legacy IDs never grant global privileges."""
+    scope = normalize_adapter_name(legacy_adapter)
+    resolved = set()
+    for entry in entries:
+        value = str(entry).strip()
+        if ":" in value:
+            adapter, user_id = value.split(":", 1)
+            adapter = normalize_adapter_name(adapter)
+            if adapter and user_id.strip():
+                resolved.add(f"{adapter}:{user_id.strip()}")
+        elif value and scope:
+            resolved.add(f"{scope}:{value}")
+    return frozenset(resolved)
+
+
 class ReminderConfig(BaseModel):
-    admin_users: List[str] = Field(default_factory=list, description="配置超管账号名或ID列表，拥有跨界管理权限")
-    authorized_users: List[str] = Field(default_factory=list, description="额外允许在群聊中创建提醒的用户ID列表")
+    admin_users: List[str] = Field(default_factory=list, description="聊天管理员列表，格式为适配器名称:用户ID，仅管理该适配器")
+    authorized_users: List[str] = Field(default_factory=list, description="额外允许群聊创建提醒的用户列表，格式为适配器名称:用户ID")
+    legacy_acl_adapter: str = Field(default="", description="旧裸用户ID权限的适配器归属，不是全局权限")
     group_create_policy: str = Field(default="admin_only", description="群聊创建提醒策略：admin_only、mentioned_user 或 all")
     action_policy: str = Field(default="admin_and_trusted_bot", description="高风险 action 字段策略")
     autonomy_enabled: bool = Field(default=False, description="是否启用自主意图循环")
@@ -98,6 +117,14 @@ class ReminderConfig(BaseModel):
     autonomy_allowed_tools: List[str] = Field(default_factory=lambda: list(DEFAULT_AUTONOMY_ALLOWED_TOOLS), description="自主事件可调用工具白名单")
     random_check_probability: float = Field(default=AUTONOMOUS_RANDOM_PROBABILITY, description="旧版随机自检抽样概率，保留兼容但不再使用")
     visible_output_policy: str = Field(default="necessary_only", description="自主循环可见输出策略")
+
+    @field_validator("legacy_acl_adapter", mode="before")
+    @classmethod
+    def validate_legacy_acl_adapter(cls, value):
+        name = str(value or "").strip()
+        if name and not normalize_adapter_name(name):
+            raise ValueError("legacy_acl_adapter must be an adapter name without ':'")
+        return name
 
     @field_validator("admin_users", "authorized_users", "allowed_sessions", "autonomy_allowed_tools", mode="before")
     @classmethod

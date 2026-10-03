@@ -9,7 +9,6 @@ import datetime
 import json
 import random
 import secrets
-import shutil
 import time
 from pathlib import Path
 from typing import Optional, Dict, List, Any
@@ -26,11 +25,12 @@ from core.utils.path_utils import get_data_path
 
 from .identity import (
     EventOrigin,
+    IDENTITY_SCHEMA_VERSION,
     IdentityResolver,
     PrincipalContext,
     PrincipalKind,
     build_bot_principal_id,
-    migrate_reminder_identity,
+    normalize_adapter_name,
 )
 from .permissions import (
     ReminderOperation,
@@ -51,6 +51,7 @@ from .config import (
     DEFAULT_USAGE_PROMPT,
     ReminderConfig,
     flatten_config,
+    scoped_acl_entries,
 )
 from .autonomy import (
     AutonomyCoordinator,
@@ -66,6 +67,7 @@ from .autonomy import (
     random_job_id,
 )
 from .storage import ReminderStorage
+from .migration import migrate_identity_stores, pin_legacy_acl_adapter
 from .delivery import DeliveryTracker
 from .reminder_service import ReminderService
 from .scheduler import ReminderScheduler
@@ -81,6 +83,7 @@ class ReminderPlugin(BasePlugin):
 
     def __init__(self, ctx, cfg: dict):
         super().__init__(ctx, cfg)
+        self._config_source = cfg
         cfg = self._migrate_advanced_config(cfg)
         self.plugin_cfg = cfg
         self.config = ReminderConfig(**self._flatten_config(cfg))
@@ -134,7 +137,8 @@ class ReminderPlugin(BasePlugin):
         return migrated
 
     async def initialize(self):
-        await self._migrate_identity_schema_v2()
+        await self._initialize_adapter_acl()
+        await self._migrate_identity_schema()
 
         self._scheduler = AsyncIOScheduler()
         try:
@@ -201,7 +205,7 @@ class ReminderPlugin(BasePlugin):
             return
         await self._delivery.reconcile()
         issues = await self._delivery.list_issues(
-            self._get_sid(event), principal, self.config.admin_users,
+            self._get_sid(event), principal, self._admin_acl(),
             self._allowed_autonomy_sessions(),
         )
         visible = [
@@ -535,7 +539,7 @@ class ReminderPlugin(BasePlugin):
             await self._delivery.reconcile()
             principal = self._get_principal(self._build_web_event(sid))
             issues = await self._delivery.list_issues(
-                sid, principal, self.config.admin_users, self._allowed_autonomy_sessions(),
+                sid, principal, self._admin_acl(), self._allowed_autonomy_sessions(),
                 include_awaiting=True,
             )
             return {"status": "ok", "data": issues}
@@ -551,7 +555,7 @@ class ReminderPlugin(BasePlugin):
             return {"status": "error", "msg": "缺少必要参数"}
         principal = self._get_principal(self._build_web_event(sid))
         message, entry = await self._delivery.resolve(
-            sid, delivery_id, principal, self.config.admin_users,
+            sid, delivery_id, principal, self._admin_acl(),
             self._allowed_autonomy_sessions(), decision, allow_unsafe_retry=True,
         )
         if entry and decision == "retry":
@@ -627,35 +631,40 @@ class ReminderPlugin(BasePlugin):
         )
         return not any(marker in result for marker in error_markers)
 
-    async def _migrate_identity_schema_v2(self):
-        """Upgrade persisted reminder ownership with a one-time recoverable backup."""
-        data = await self._storage.load()
-        if not isinstance(data, dict) or not data:
-            return
-        pending = sum(
-            1
-            for reminders in data.values()
-            if isinstance(reminders, list)
-            for reminder in reminders
-            if isinstance(reminder, dict) and reminder.get("identity_schema") != 2
-        )
-        if not pending:
-            return
-
-        backup_path = self._storage.path.with_name("reminders.pre-v2.2.backup.json")
-        if self._storage.path.exists() and not backup_path.exists():
-            shutil.copy2(self._storage.path, backup_path)
-
-        migrated = 0
-        for sid, reminders in data.items():
-            if not isinstance(reminders, list):
-                continue
-            for reminder in reminders:
-                if isinstance(reminder, dict) and migrate_reminder_identity(str(sid), reminder):
-                    migrated += 1
+    async def _migrate_identity_schema(self):
+        migrated = await migrate_identity_stores(self._storage, self._delivery_storage)
         if migrated:
-            await self._storage.save(data)
-            logger.info(f"[Reminder] Migrated {migrated} reminders to identity schema v2")
+            logger.info(f"[Reminder] Migrated {migrated} records to identity schema v{IDENTITY_SCHEMA_VERSION}")
+
+    async def _initialize_adapter_acl(self):
+        """Bind old ACLs once using configured adapters, including disabled ones."""
+        entries = self.config.admin_users + getattr(self.config, "authorized_users", [])
+        if getattr(self.config, "legacy_acl_adapter", "") or not any(":" not in item for item in entries):
+            return
+        manager = getattr(getattr(self, "ctx", None), "adapter_mgr", None)
+        getter = getattr(manager, "get_adapters_info", None)
+        infos = getter() if callable(getter) else []
+        names = [normalize_adapter_name(getattr(info, "name", "")) for info in infos]
+        if len(names) != 1 or not names[0]:
+            logger.warning(
+                "[Reminder] 旧管理员/授权用户 ID 缺少适配器范围，暂不授予其额外权限。"
+                "请在插件配置中改填 '适配器名称:用户ID'，或设置 legacy_acl_adapter。"
+            )
+            return
+        adapter = names[0]
+        path = get_data_path() / "config" / "plugins" / "reminder_plugin.json"
+        await pin_legacy_acl_adapter(path, self.plugin_cfg, adapter)
+        self.config.legacy_acl_adapter = adapter
+        self.plugin_cfg["legacy_acl_adapter"] = adapter
+        # The public plugin config is shared with the registry; keep its UI view in sync.
+        self._config_source["legacy_acl_adapter"] = adapter
+        logger.info(f"[Reminder] 已备份旧权限配置，并将裸用户 ID 权限绑定到适配器 {adapter}")
+
+    def _admin_acl(self) -> frozenset[str]:
+        return scoped_acl_entries(self.config.admin_users, getattr(self.config, "legacy_acl_adapter", ""))
+
+    def _authorized_acl(self) -> frozenset[str]:
+        return scoped_acl_entries(self.config.authorized_users, getattr(self.config, "legacy_acl_adapter", ""))
 
     def _get_principal(self, event) -> PrincipalContext:
         return self._identity.resolve(event)
@@ -696,12 +705,14 @@ class ReminderPlugin(BasePlugin):
             visibility = "admin_only"
             managed_by = "reminder_plugin"
         return {
-            "identity_schema": 2,
+            "identity_schema": IDENTITY_SCHEMA_VERSION,
             "owner_type": owner_type,
             "owner_id": owner_id,
+            "owner_adapter_name": principal.adapter_scope,
             "owner_name": owner_name,
             "created_by_type": principal.kind.value,
             "created_by_id": principal.principal_id,
+            "created_by_adapter_name": principal.adapter_scope,
             "origin": principal.origin.value,
             "visibility": visibility,
             "managed_by": managed_by,
@@ -718,11 +729,11 @@ class ReminderPlugin(BasePlugin):
             target_reminder,
             operation=operation,
             sid=self._get_sid(event),
-            admin_users=self.config.admin_users,
+            admin_users=self._admin_acl(),
         )
 
     def _is_admin_user(self, event) -> bool:
-        return is_admin(self._get_principal(event), self.config.admin_users)
+        return is_admin(self._get_principal(event), self._admin_acl())
 
     def _is_group_event(self, event) -> bool:
         try:
@@ -760,7 +771,7 @@ class ReminderPlugin(BasePlugin):
         return False
 
     def _is_authorized_user(self, event) -> bool:
-        return is_authorized(self._get_principal(event), self.config.authorized_users)
+        return is_authorized(self._get_principal(event), self._authorized_acl())
 
     def _check_create_permission(self, event) -> tuple[bool, str]:
         if can_create_reminder(
@@ -768,8 +779,8 @@ class ReminderPlugin(BasePlugin):
             is_group=self._is_group_event(event),
             is_mentioned=self._is_event_mentioned(event),
             group_policy=self.config.group_create_policy,
-            admin_users=self.config.admin_users,
-            authorized_users=self.config.authorized_users,
+            admin_users=self._admin_acl(),
+            authorized_users=self._authorized_acl(),
             autonomy_mode=self.config.autonomy_mode,
         ):
             return True, ""
@@ -781,7 +792,7 @@ class ReminderPlugin(BasePlugin):
         if can_set_action(
             self._get_principal(event),
             action_policy=self.config.action_policy,
-            admin_users=self.config.admin_users,
+            admin_users=self._admin_acl(),
             autonomy_mode=self.config.autonomy_mode,
         ):
             return True, ""
@@ -958,7 +969,7 @@ class ReminderPlugin(BasePlugin):
                     self._get_principal(event),
                     r,
                     sid=sid,
-                    admin_users=self.config.admin_users,
+                    admin_users=self._admin_acl(),
                 ):
                     filtered_reminders.append(r)
 
@@ -1171,7 +1182,7 @@ class ReminderPlugin(BasePlugin):
             identity_fields_for_event=self._identity_fields_for_event,
             get_principal=self._get_principal,
             is_admin_user=self._is_admin_user,
-            admin_users=self.config.admin_users,
+            admin_users=self._admin_acl(),
             remove_job=lambda job_id: self._scheduler.remove_job(job_id) if self._scheduler else None,
             add_job=self._add_job,
         )
@@ -1229,7 +1240,7 @@ class ReminderPlugin(BasePlugin):
             return result
         await self._delivery.reconcile()
         issues = await self._delivery.list_issues(
-            self._get_sid(event), self._get_principal(event), self.config.admin_users,
+            self._get_sid(event), self._get_principal(event), self._admin_acl(),
             self._allowed_autonomy_sessions(), include_awaiting=True,
         )
         if issues:
@@ -1486,7 +1497,7 @@ class ReminderPlugin(BasePlugin):
         sid = self._get_sid(event)
         await self._delivery.reconcile()
         issues = await self._delivery.list_issues(
-            sid, self._get_principal(event), self.config.admin_users,
+            sid, self._get_principal(event), self._admin_acl(),
             self._allowed_autonomy_sessions(),
         )
         if not issues:
@@ -1521,7 +1532,7 @@ class ReminderPlugin(BasePlugin):
         sid = self._get_sid(event)
         principal = self._get_principal(event)
         message, entry = await self._delivery.resolve(
-            sid, delivery_id, principal, self.config.admin_users,
+            sid, delivery_id, principal, self._admin_acl(),
             self._allowed_autonomy_sessions(), decision,
         )
         if entry and decision == "retry":

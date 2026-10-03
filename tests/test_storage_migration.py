@@ -36,9 +36,10 @@ class StorageMigrationTests(unittest.TestCase):
 
             plugin = main.ReminderPlugin.__new__(main.ReminderPlugin)
             plugin._storage = main.ReminderStorage(path)
-            asyncio.run(plugin._migrate_identity_schema_v2())
+            plugin._delivery_storage = main.ReminderStorage(Path(temp_dir) / "delivery_state.json")
+            asyncio.run(plugin._migrate_identity_schema())
 
-            backup = path.with_name("reminders.pre-v2.2.backup.json")
+            backup = path.with_name("reminders.pre-identity-v3.backup.json")
             assert backup.exists()
             assert json.loads(backup.read_text(encoding="utf-8")) == original
             migrated = json.loads(path.read_text(encoding="utf-8"))
@@ -46,7 +47,7 @@ class StorageMigrationTests(unittest.TestCase):
             assert migrated["qq:dm:10001"][0]["owner_id"] == "10001"
 
             backup_bytes = backup.read_bytes()
-            asyncio.run(plugin._migrate_identity_schema_v2())
+            asyncio.run(plugin._migrate_identity_schema())
             assert backup.read_bytes() == backup_bytes
 
     def test_internal_event_tool_filter_is_capability_aware(self):

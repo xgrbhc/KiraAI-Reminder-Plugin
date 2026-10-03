@@ -211,13 +211,13 @@ def test_legacy_group_reminder_is_admin_only():
         member,
         reminder,
         sid="qq:gm:20001",
-        admin_users=["99999"],
+        admin_users=["qq:99999"],
     )
     assert permissions.can_view_reminder(
         admin,
         reminder,
         sid="qq:gm:20001",
-        admin_users=["99999"],
+        admin_users=["qq:99999"],
     )
 
 

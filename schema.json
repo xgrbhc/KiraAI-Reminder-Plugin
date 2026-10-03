@@ -1,15 +1,39 @@
 {
   "admin_users": {
-    "name": "管理员 QQ",
+    "name": "聊天管理员（按适配器）",
     "type": "list",
     "default": [],
-    "hint": "可以管理群聊提醒和重要操作的 QQ 号，一行一个。个人私聊使用可先只填自己。"
+    "hint": "一行一个，格式为 适配器名称:用户ID，例如 QQ:123456。只能管理所填适配器内的提醒；名称需与会话 ID 的适配器部分一致，区分大小写。旧裸 ID 需配合下方的旧权限归属设置。",
+    "locales": {
+      "en": {
+        "name": "Chat admins (adapter-scoped)",
+        "hint": "One AdapterName:userID per line, e.g. QQ:123456. Grants management only within that adapter. Adapter names are case-sensitive and match session IDs. Bare legacy IDs require the legacy adapter scope below."
+      }
+    }
   },
   "authorized_users": {
     "name": "授权用户",
     "type": "list",
     "default": [],
-    "hint": "额外允许在群聊中创建提醒的用户 ID，一行一个。管理员无需重复填写。"
+    "hint": "一行一个，格式为 适配器名称:用户ID。额外允许这些用户在相应适配器群聊中创建提醒；管理员无需重复填写。",
+    "locales": {
+      "en": {
+        "name": "Authorized users",
+        "hint": "One AdapterName:userID per line. Allows group reminder creation within that adapter; admins need not be listed again."
+      }
+    }
+  },
+  "legacy_acl_adapter": {
+    "name": "旧裸 ID 权限归属适配器",
+    "type": "string",
+    "default": "",
+    "hint": "只影响管理员/授权用户列表中的旧裸 ID。仅配置一个适配器时首次加载会备份并自动填入其名称；配置多个适配器时须自行指定，或将列表改为 适配器名称:用户ID。空值不会授予裸 ID 全局权限；适配器名称区分大小写。",
+    "locales": {
+      "en": {
+        "name": "Legacy bare-ID adapter scope",
+        "hint": "Applies only to bare IDs in the admin/authorized lists. A sole configured adapter is backed up and pinned on first load. With multiple adapters, specify a scope or use AdapterName:userID entries. Empty does not grant global privileges. Case-sensitive."
+      }
+    }
   },
   "group_create_policy": {
     "name": "群聊创建策略",

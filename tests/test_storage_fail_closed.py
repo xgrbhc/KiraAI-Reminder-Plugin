@@ -106,6 +106,8 @@ def test_corrupt_reminders_stop_initialization_before_scheduler_starts(
         path.write_bytes(b"{corrupt")
         plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
         plugin._storage = reminder_main.ReminderStorage(path)
+        plugin.config = reminder_main.ReminderConfig()
+        attach_delivery(plugin, reminder_main, tmp_path)
         scheduler_started = False
 
         def scheduler_factory():
@@ -153,6 +155,8 @@ def test_failed_autonomy_load_shuts_down_started_scheduler(
         plugin._health_task = None
         plugin._pending = {}
         plugin.config = SimpleNamespace(
+            admin_users=[],
+            authorized_users=[],
             autonomy_enabled=True,
             autonomy_mode="plan_only",
             allowed_sessions=["qq:dm:10001"],

@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Any, Iterable, Mapping, Optional
 
 
-IDENTITY_SCHEMA_VERSION = 2
+IDENTITY_SCHEMA_VERSION = 3
 ENVELOPE_NAMESPACE = "reminder_plugin"
 UNTRUSTED_IDS = frozenset(
     {
@@ -61,14 +61,44 @@ class PrincipalContext:
     trusted: bool = False
     delegated_owner_id: str = ""
     delivery_id: str = ""
+    adapter_name: str = ""
 
     @property
     def is_autonomy_event(self) -> bool:
         return self.origin in AUTONOMY_ORIGINS
 
     @property
+    def adapter_scope(self) -> str:
+        adapter = normalize_adapter_name(self.adapter_name)
+        session_adapter = adapter_from_session_id(self.session_id)
+        if adapter and session_adapter and adapter != session_adapter:
+            return ""
+        return adapter or session_adapter
+
+    @property
+    def scoped_user_id(self) -> str:
+        if not self.adapter_scope or not self.principal_id:
+            return ""
+        return f"{self.adapter_scope}:{self.principal_id}"
+
+    @property
     def actor_key(self) -> str:
+        if self.kind in {PrincipalKind.USER, PrincipalKind.LEGACY}:
+            return f"{self.kind.value}:{self.adapter_scope or 'unknown'}:{self.principal_id}"
         return f"{self.kind.value}:{self.principal_id}"
+
+
+def normalize_adapter_name(value: Any) -> str:
+    """Accept an unambiguous Kira session namespace; preserve its case."""
+    name = str(value or "").strip()
+    return name if name and ":" not in name and name != "unknown" else ""
+
+
+def adapter_from_session_id(sid: str) -> str:
+    parts = str(sid or "").split(":", 2)
+    if len(parts) != 3 or parts[1] not in {"dm", "gm", "sm"} or not parts[2]:
+        return ""
+    return normalize_adapter_name(parts[0])
 
 
 def build_bot_principal_id(adapter_name: str, self_id: Any) -> str:
@@ -111,9 +141,10 @@ def _event_adapter_name(event: Any) -> str:
     adapter = getattr(event, "adapter", None)
     name = getattr(adapter, "name", "")
     if name:
-        return str(name)
-    sid = _event_sid(event)
-    return sid.split(":", 1)[0] if ":" in sid else "unknown"
+        return normalize_adapter_name(name)
+    session = getattr(event, "session", None)
+    name = getattr(session, "adapter_name", "")
+    return normalize_adapter_name(name) or adapter_from_session_id(_event_sid(event))
 
 
 def _event_bot_id(event: Any, messages: list[Any]) -> str:
@@ -213,6 +244,7 @@ class IdentityResolver:
                     trusted=True,
                     delegated_owner_id=str(payload.get("delegated_owner_id") or ""),
                     delivery_id=str(payload.get("delivery_id") or ""),
+                    adapter_name=_event_adapter_name(event),
                 )
 
         user_id, nickname = _event_sender(messages)
@@ -230,6 +262,7 @@ class IdentityResolver:
             session_id=session_id,
             bot_id=bot_id,
             trusted=False,
+            adapter_name=_event_adapter_name(event),
         )
 
 
@@ -250,9 +283,19 @@ def _is_unmentioned_group_event(event: Any, messages: list[Any], session_id: str
 
 
 def migrate_reminder_identity(sid: str, reminder: dict[str, Any]) -> bool:
-    """Upgrade one reminder to identity schema v2 without discarding compatibility fields."""
-    if reminder.get("identity_schema") == IDENTITY_SCHEMA_VERSION:
+    """Add adapter scope, preserving v2 ownership and compatibility fields."""
+    version = reminder.get("identity_schema")
+    if isinstance(version, int) and version >= IDENTITY_SCHEMA_VERSION:
         return False
+
+    adapter_name = adapter_from_session_id(sid)
+    if version == 2:
+        reminder.update({
+            "identity_schema": IDENTITY_SCHEMA_VERSION,
+            "owner_adapter_name": adapter_name,
+            "created_by_adapter_name": adapter_name,
+        })
+        return True
 
     creator_id = str(reminder.get("creator_id") or "legacy_user")
     creator_name = str(reminder.get("creator_name") or "未知")
@@ -263,7 +306,6 @@ def migrate_reminder_identity(sid: str, reminder: dict[str, Any]) -> bool:
     )
 
     if is_autonomous:
-        adapter_name = sid.split(":", 1)[0] if ":" in sid else "unknown"
         owner_type = PrincipalKind.BOT.value
         owner_id = build_bot_principal_id(adapter_name, "legacy")
         owner_name = "自主意图循环"
@@ -297,9 +339,11 @@ def migrate_reminder_identity(sid: str, reminder: dict[str, Any]) -> bool:
             "identity_schema": IDENTITY_SCHEMA_VERSION,
             "owner_type": owner_type,
             "owner_id": owner_id,
+            "owner_adapter_name": adapter_name,
             "owner_name": owner_name,
             "created_by_type": created_by_type,
             "created_by_id": owner_id,
+            "created_by_adapter_name": adapter_name,
             "origin": origin,
             "visibility": visibility,
             "managed_by": reminder.get("managed_by")

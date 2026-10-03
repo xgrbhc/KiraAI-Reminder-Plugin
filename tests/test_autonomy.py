@@ -273,6 +273,7 @@ def test_schedule_intent_followup_keeps_reminder_identity_and_cleanup(
             kind=reminder_main.PrincipalKind.BOT,
             principal_id="bot:qq:123",
             origin=reminder_main.EventOrigin.AUTONOMY_DAILY_REFLECTION,
+            session_id=sid,
             bot_id="123",
         )
         result = await coordinator.schedule_intent_followup(
@@ -282,6 +283,9 @@ def test_schedule_intent_followup_keeps_reminder_identity_and_cleanup(
         reminder = (await plugin._storage.load())[sid][0]
         assert reminder["creator_id"] == "bot:qq:123"
         assert reminder["owner_type"] == "bot"
+        assert reminder["identity_schema"] == 3
+        assert reminder["owner_adapter_name"] == "qq"
+        assert reminder["created_by_adapter_name"] == "qq"
         assert reminder["source"] == "autonomous_intent_loop"
         assert reminder["managed_by"] == "reminder_plugin.autonomous"
         assert reminder["intent_id"] == intent_id
@@ -329,7 +333,8 @@ def test_lifecycle_reinitialization_registers_one_set_of_jobs(
         async def idle_health_check():
             await asyncio.Event().wait()
 
-        plugin._migrate_identity_schema_v2 = no_migration
+        plugin._migrate_identity_schema = no_migration
+        plugin._initialize_adapter_acl = no_migration
         plugin._health_check_loop = idle_health_check
         for _ in range(2):
             await plugin.initialize()

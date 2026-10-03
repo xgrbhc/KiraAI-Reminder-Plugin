@@ -27,7 +27,10 @@ from .config import (
     AUTONOMOUS_RANDOM_START_HOUR,
     AUTONOMOUS_SOURCE,
 )
-from .identity import EventOrigin, PrincipalContext, PrincipalKind, build_bot_principal_id
+from .identity import (
+    IDENTITY_SCHEMA_VERSION, EventOrigin, PrincipalContext, PrincipalKind,
+    adapter_from_session_id, build_bot_principal_id,
+)
 from .storage import ReminderStorage
 from .time_utils import get_local_now, parse_time_string
 
@@ -598,7 +601,7 @@ class AutonomyCoordinator:
         batch_ts = get_local_now().strftime("%Y%m%d%H%M%S%f")
         job_id = f"autonomous_{sid}_{intent_id}_{batch_ts}"
         followup_content = str(content or "").strip() or f"检查自主意图进展: {intent.get('title', intent_id)}"
-        adapter_name = sid.split(":", 1)[0] if ":" in sid else "unknown"
+        adapter_name = adapter_from_session_id(sid)
         creator_id = build_bot_principal_id(adapter_name, principal.bot_id or "unknown")
         reminder = {
             "content": followup_content,
@@ -614,12 +617,14 @@ class AutonomyCoordinator:
             "intent_id": intent_id,
             "intent_title": intent.get("title", ""),
             "intent_notes": intent.get("notes", ""),
-            "identity_schema": 2,
+            "identity_schema": IDENTITY_SCHEMA_VERSION,
             "owner_type": PrincipalKind.BOT.value,
             "owner_id": creator_id,
+            "owner_adapter_name": adapter_name,
             "owner_name": "自主意图循环",
             "created_by_type": principal.kind.value,
             "created_by_id": principal.principal_id,
+            "created_by_adapter_name": principal.adapter_scope,
             "origin": principal.origin.value,
             "managed_by": AUTONOMOUS_MANAGER,
             "visibility": "session_readonly",
