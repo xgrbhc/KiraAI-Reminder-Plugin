@@ -576,26 +576,29 @@ class AutonomyCoordinator:
         status: str | None = None,
         priority: float | None = None,
     ) -> str:
+        changes = {}
+        if title is not None and str(title).strip():
+            changes["title"] = str(title).strip()
+        if notes is not None:
+            changes["notes"] = str(notes or "").strip()
+        if status is not None:
+            status_value = str(status or "").strip()
+            if status_value not in ("active", "paused", "waiting_confirmation", "closed"):
+                return "❌ status 参数无效"
+            changes["status"] = status_value
+        if priority is not None:
+            try:
+                changes["priority"] = max(0.0, min(1.0, float(priority)))
+            except (TypeError, ValueError):
+                return "❌ priority 需要是 0~1 的数字"
+
         async with self._autonomy_storage.modify() as state:
             session_state = ensure_autonomy_session(state, sid)
             intent = find_intent(session_state, intent_id)
             if not intent:
                 return f"找不到自主意图: {intent_id}"
-            if title is not None and str(title).strip():
-                intent["title"] = str(title).strip()
-            if notes is not None:
-                intent["notes"] = str(notes or "").strip()
-            if status is not None:
-                status_value = str(status or "").strip()
-                if status_value not in ("active", "paused", "waiting_confirmation", "closed"):
-                    return "❌ status 参数无效"
-                intent["status"] = status_value
-            if priority is not None:
-                try:
-                    intent["priority"] = max(0.0, min(1.0, float(priority)))
-                except (TypeError, ValueError):
-                    return "❌ priority 需要是 0~1 的数字"
-            intent["updated_at"] = now_str()
+            changes["updated_at"] = now_str()
+            intent.update(changes)
             return f"已更新自主意图: {intent.get('title', intent_id)}"
 
     async def close_intent(

@@ -3,7 +3,7 @@
 Run with: python -m pytest tests/audit_probes.py -q -s
 Some probes assert an observed defect to make its reproduction deterministic.
 Passing here means the observation was reproduced, not that the defect is fixed.
-R1/R2/R3 probes now assert corrected behavior; remaining observations retain their meaning.
+R1/R2/R3/R4 probes now assert corrected behavior; remaining observations retain their meaning.
 This filename is excluded from pytest's normal test_* discovery.
 All state is temporary; scheduler and publish callbacks are in-memory fakes.
 """
@@ -99,7 +99,7 @@ def test_daily_cycle_preserves_a_concurrent_new_intent(reminder_main, tmp_path):
     asyncio.run(run())
 
 
-def test_observed_invalid_update_still_changes_intent_title(reminder_main, tmp_path):
+def test_invalid_update_preserves_the_original_intent(reminder_main, tmp_path):
     async def run():
         plugin = make_autonomy_plugin(reminder_main, tmp_path)
         coordinator = plugin._autonomy_coordinator()
@@ -107,8 +107,8 @@ def test_observed_invalid_update_still_changes_intent_title(reminder_main, tmp_p
         original = (await plugin._autonomy_storage.load())["sessions"][SID]["intents"][0]
         result = await coordinator.update_intent(SID, original["id"], title="changed", status="invalid")
         after = (await plugin._autonomy_storage.load())["sessions"][SID]["intents"][0]
-        assert result.startswith("❌") and after["title"] == "changed"
-        observation("partial_invalid_update", reported_failure=True, title_changed=True)
+        assert result.startswith("❌") and after == original
+        observation("partial_invalid_update", reported_failure=True, title_changed=False)
 
     asyncio.run(run())
 
