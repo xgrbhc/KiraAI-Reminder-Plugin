@@ -11,6 +11,7 @@ from typing import Any
 from core.plugin import logger
 
 from .identity import PrincipalContext, PrincipalKind
+from .job_sync import reminder_job_commit
 from .permissions import ReminderOperation, can_manage_reminder
 from .storage import ReminderStorage
 from .time_utils import (
@@ -43,6 +44,7 @@ class ReminderService:
         admin_users: Collection[str],
         remove_job: Callable[[str], None],
         add_job: Callable[[str, dict], None],
+        get_scheduler: Callable[[], Any] | None = None,
         confirmed_delete: bool = False,
     ) -> None:
         self._storage = storage
@@ -58,7 +60,14 @@ class ReminderService:
         self._admin_users = admin_users
         self._remove_job = remove_job
         self._add_job = add_job
+        self._get_scheduler = get_scheduler
         self._confirmed_delete = confirmed_delete
+
+    def _job_commit(self, sid: str) -> Callable[[dict, dict], None]:
+        return reminder_job_commit(
+            sid, add_job=self._add_job, remove_job=self._remove_job,
+            get_scheduler=self._get_scheduler,
+        )
 
     def _cleanup_tokens(self) -> None:
         now = time.time()
@@ -139,7 +148,7 @@ class ReminderService:
             elif repeat == "none" and start_time < get_local_now():
                 return "❌ 不能设置过去的时间"
 
-            async with self._storage.modify() as data:
+            async with self._storage.modify(after_save=self._job_commit(sid)) as data:
                 allowed, reason = self._check_create_permission(event)
                 if not allowed:
                     return reason
@@ -166,7 +175,6 @@ class ReminderService:
                         if action: r["action"] = action
                         r.update(identity_fields)
                         data[sid].append(r)
-                        self._add_job(sid, r)
                     times_str = "\n".join(f"  {i+1}. {t.strftime('%Y-%m-%d %H:%M')}"
                                            for i, t in enumerate(trigger_times))
                     return (f"已添加随机待办: {content} (共{len(trigger_times)}次)\n"
@@ -185,7 +193,6 @@ class ReminderService:
                 if action: r["action"] = action
                 r.update(identity_fields)
                 data[sid].append(r)
-                self._add_job(sid, r)
 
             repeat_text = {"none": "", "daily": " (每天)", "weekly": " (每周)",
                            "monthly": " (每月)", "yearly": " (每年)",
@@ -242,7 +249,7 @@ class ReminderService:
         try:
             self._cleanup_tokens()
             sid = self._get_sid(event)
-            async with self._storage.modify() as data:
+            async with self._storage.modify(after_save=self._job_commit(sid)) as data:
                 reminders = data.get(sid, [])
                 if not reminders:
                     return "当前没有待办"
@@ -269,13 +276,6 @@ class ReminderService:
                     return (f"注意: 「{reminder['content']}」是重要提醒\n"
                             f"请确认删除令牌: {token}")
 
-                for r in targets:
-                    if "job_id" in r:
-                        try:
-                            self._remove_job(r["job_id"])
-                        except Exception:
-                            pass
-
                 if delete_batch and batch_id:
                     data[sid] = [r for r in reminders if r.get("random_batch_id") != batch_id]
                     return f"已批量删除: {reminder['content']} (共{len(targets)}项)"
@@ -297,7 +297,7 @@ class ReminderService:
             if pending.get("actor_key") != principal.actor_key and not self._is_admin_user(event):
                 return "❌ 权限拒绝：确认令牌不属于当前主体。"
             sid, job_ids, content = pending["session_id"], pending["job_ids"], pending["content"]
-            async with self._storage.modify() as data:
+            async with self._storage.modify(after_save=self._job_commit(sid)) as data:
                 reminders = data.get(sid, [])
                 targets = [r for r in reminders if r.get("job_id") in job_ids]
                 batch_id = pending.get("batch_id")
@@ -320,14 +320,9 @@ class ReminderService:
                 before = len(reminders)
                 data[sid] = [r for r in reminders if r.get("job_id") not in job_ids]
                 deleted = before - len(data[sid])
-                for jid in job_ids:
-                    try:
-                        self._remove_job(jid)
-                    except Exception:
-                        pass
-                del self._pending[confirm_token]
-                suffix = f" (共{deleted}项)" if deleted > 1 else ""
-                return f"已删除: {content}{suffix}"
+            del self._pending[confirm_token]
+            suffix = f" (共{deleted}项)" if deleted > 1 else ""
+            return f"已删除: {content}{suffix}"
         except Exception as e:
             return f"出错: {e}"
 
@@ -371,7 +366,7 @@ class ReminderService:
     async def pause_reminder(self, event: Any, job_id: str = "") -> str:
         try:
             sid = self._get_sid(event)
-            async with self._storage.modify() as data:
+            async with self._storage.modify(after_save=self._job_commit(sid)) as data:
                 reminders = data.get(sid, [])
                 r = next((r for r in reminders if r.get("job_id") == job_id), None)
                 if r is None:
@@ -381,10 +376,6 @@ class ReminderService:
                 if r.get("paused"):
                     return f"已经暂停: {r['content']}"
                 r["paused"] = True
-                try:
-                    self._remove_job(job_id)
-                except Exception:
-                    pass
                 return f"已暂停: {r['content']}"
         except Exception as e:
             return f"出错: {e}"
@@ -392,7 +383,7 @@ class ReminderService:
     async def resume_reminder(self, event: Any, job_id: str = "") -> str:
         try:
             sid = self._get_sid(event)
-            async with self._storage.modify() as data:
+            async with self._storage.modify(after_save=self._job_commit(sid)) as data:
                 reminders = data.get(sid, [])
                 r = next((r for r in reminders if r.get("job_id") == job_id), None)
                 if r is None:
@@ -408,7 +399,6 @@ class ReminderService:
                         return f"已过期，无法恢复: {r['content']}"
 
                 r["paused"] = False
-                self._add_job(sid, r)
                 return f"已恢复: {r['content']}"
         except Exception as e:
             return f"出错: {e}"
@@ -435,7 +425,7 @@ class ReminderService:
                 except ValueError:
                     return "时间格式需为 YYYY-MM-DD HH:MM"
 
-            async with self._storage.modify() as data:
+            async with self._storage.modify(after_save=self._job_commit(sid)) as data:
                 reminders = data.get(sid, [])
                 r_index = next((i for i, rv in enumerate(reminders) if rv.get("job_id") == job_id), -1)
                 if r_index == -1:
@@ -475,14 +465,6 @@ class ReminderService:
                 if repeat is not None: r["repeat"] = new_repeat
                 if category is not None: r["category"] = category
                 if action is not None: r["action"] = action
-
-                try:
-                    self._remove_job(job_id)
-                except Exception:
-                    pass
-
-                if not r.get("paused"):
-                    self._add_job(sid, r)
 
                 return f"已更新: {r['content']}\n[{r['time']}]"
         except Exception as e:

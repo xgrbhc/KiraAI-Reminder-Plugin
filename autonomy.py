@@ -31,6 +31,7 @@ from .identity import (
     IDENTITY_SCHEMA_VERSION, EventOrigin, PrincipalContext, PrincipalKind,
     adapter_from_session_id, build_bot_principal_id,
 )
+from .job_sync import reminder_job_commit
 from .storage import ReminderStorage
 from .time_utils import get_local_now, parse_time_string
 
@@ -452,7 +453,7 @@ class AutonomyCoordinator:
         job_id: str | None = None,
     ) -> int:
         removed = 0
-        async with self._storage.modify() as data:
+        async with self._storage.modify(after_save=self._job_commit(sid)) as data:
             reminders = data.get(sid, [])
             if any(is_autonomous_reminder(reminder) and reminder.get("important")
                    and ((intent_id and reminder.get("intent_id") == intent_id)
@@ -464,16 +465,21 @@ class AutonomyCoordinator:
                 matches_job = job_id and reminder.get("job_id") == job_id
                 if is_autonomous_reminder(reminder) and (matches_intent or matches_job):
                     removed += 1
-                    try:
-                        scheduler = self._get_scheduler()
-                        if scheduler and reminder.get("job_id"):
-                            scheduler.remove_job(reminder["job_id"])
-                    except Exception:
-                        pass
                     continue
                 kept.append(reminder)
             data[sid] = kept
         return removed
+
+    def _job_commit(self, sid: str) -> Callable[[dict, dict], None]:
+        def remove_job(job_id: str) -> None:
+            scheduler = self._get_scheduler()
+            if scheduler is not None:
+                scheduler.remove_job(job_id)
+
+        return reminder_job_commit(
+            sid, add_job=self._add_reminder_job, remove_job=remove_job,
+            get_scheduler=self._get_scheduler,
+        )
 
     async def list_intents(self, sid: str, include_closed: bool = False) -> str:
         state = await self.load_state()
@@ -602,12 +608,6 @@ class AutonomyCoordinator:
         if intent.get("status") == "closed":
             return "❌ 不能为已关闭意图安排跟进"
 
-        if replace_existing:
-            try:
-                await self.remove_autonomous_reminders(sid, intent_id=intent_id)
-            except ValueError as error:
-                return f"❌ {error}"
-
         batch_ts = get_local_now().strftime("%Y%m%d%H%M%S%f")
         job_id = f"autonomous_{sid}_{intent_id}_{batch_ts}"
         followup_content = str(content or "").strip() or f"检查自主意图进展: {intent.get('title', intent_id)}"
@@ -641,10 +641,17 @@ class AutonomyCoordinator:
             "visible_output_policy": self.config.visible_output_policy,
         }
 
-        async with self._storage.modify() as data:
-            data.setdefault(sid, [])
-            data[sid].append(reminder)
-            self._add_reminder_job(sid, reminder)
+        try:
+            async with self._storage.modify(after_save=self._job_commit(sid)) as data:
+                reminders = data.setdefault(sid, [])
+                targets = [r for r in reminders if replace_existing
+                           and is_autonomous_reminder(r) and r.get("intent_id") == intent_id]
+                if any(r.get("important") for r in targets):
+                    return "❌ 关联提醒已标记重要，请先确认删除或取消重要标记"
+                data[sid] = [r for r in reminders if r not in targets] + [reminder]
+        except Exception as error:
+            logger.error(f"[Reminder] Follow-up scheduling failed: {error}")
+            return f"❌ 安排自主跟进失败: {error}"
 
         async with self._autonomy_storage.modify() as state_to_save:
             session_state = ensure_autonomy_session(state_to_save, sid)

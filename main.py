@@ -1230,6 +1230,7 @@ class ReminderPlugin(BasePlugin):
             admin_users=self._admin_acl(),
             remove_job=lambda job_id: self._scheduler.remove_job(job_id) if self._scheduler else None,
             add_job=self._add_job,
+            get_scheduler=lambda: self._scheduler,
             confirmed_delete=confirmed_delete,
         )
 

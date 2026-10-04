@@ -109,7 +109,7 @@ class ReminderScheduler:
     def add_job(self, sid: str, reminder: dict) -> None:
         scheduler = self._get_scheduler()
         if not scheduler:
-            return
+            raise RuntimeError("调度器不可用，本次操作未完成")
 
         trigger_time = parse_time_string(reminder["time"])
         repeat = reminder.get("repeat", "none")
@@ -147,6 +147,7 @@ class ReminderScheduler:
             )
         except Exception as e:
             logger.warning(f"[Reminder] 添加调度任务失败 job_id={job_id}: {e}")
+            raise RuntimeError("调度任务登记失败，请检查日志后重试") from e
 
     async def fire_reminder(
         self, sid: str, reminder: dict, delivery_id: str | None = None

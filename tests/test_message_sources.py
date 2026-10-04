@@ -9,6 +9,7 @@ import pickle
 from types import SimpleNamespace
 
 import pytest
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from core.chat.message_elements import Text
 from core.chat.message_utils import KiraIMMessage, KiraMessageBatchEvent, MessageChain
@@ -39,9 +40,11 @@ def batch(*messages, adapter="QQ", **kwargs):
 @pytest.fixture
 def plugin(reminder_main, monkeypatch, tmp_path):
     monkeypatch.setattr(reminder_main, "get_data_path", lambda: tmp_path)
-    return reminder_main.ReminderPlugin(SimpleNamespace(), {
+    instance = reminder_main.ReminderPlugin(SimpleNamespace(), {
         "group_create_policy": "all", "admin_users": ["QQ:alice"],
     })
+    instance._scheduler = AsyncIOScheduler()
+    return instance
 
 
 def rows(plugin, event):

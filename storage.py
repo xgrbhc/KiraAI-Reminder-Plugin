@@ -1,9 +1,11 @@
 """JSON-backed reminder storage with atomic file replacement."""
 
 import asyncio
+import copy
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Dict, List
@@ -84,9 +86,24 @@ class ReminderStorage:
             yield self._unsafe_load()
 
     @asynccontextmanager
-    async def modify(self) -> AsyncGenerator[Dict[str, List[Dict]], None]:
-        """Provide a locked read-modify-write transaction."""
+    async def modify(
+        self, *, after_save: Callable[[dict, dict], None] | None = None,
+    ) -> AsyncGenerator[Dict[str, List[Dict]], None]:
+        """Commit data before synchronous effects, compensating a rejected commit."""
         async with self._lock:
             data = self._unsafe_load()
+            original = copy.deepcopy(data) if after_save is not None else None
             yield data
             self._unsafe_save(data)
+            if after_save is not None:
+                try:
+                    after_save(original, data)
+                except Exception as error:
+                    try:
+                        self._unsafe_save(original)
+                    except Exception as rollback_error:
+                        logger.error(f"[Reminder] Data compensation failed: {rollback_error}")
+                        raise ReminderStorageError(
+                            "调度更新失败，数据回滚也失败，请检查数据和日志后重载插件"
+                        ) from error
+                    raise

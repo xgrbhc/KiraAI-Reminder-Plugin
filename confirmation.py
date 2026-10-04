@@ -191,7 +191,7 @@ class CheckedReminderStorage:
         return data
 
     @asynccontextmanager
-    async def modify(self):
-        async with self._storage.modify() as data:
+    async def modify(self, *, after_save=None):
+        async with self._storage.modify(after_save=after_save) as data:
             self._check(data)
             yield data

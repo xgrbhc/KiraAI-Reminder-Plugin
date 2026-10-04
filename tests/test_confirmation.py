@@ -6,6 +6,7 @@ import pickle
 from types import SimpleNamespace
 
 import pytest
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from core.chat.message_elements import Reply, Text
 from core.chat.message_utils import MessageChain
@@ -19,9 +20,11 @@ confirmation = load_plugin_module("confirmation")
 @pytest.fixture
 def plugin(reminder_main, tmp_path, monkeypatch):
     monkeypatch.setattr(reminder_main, "get_data_path", lambda: tmp_path)
-    return reminder_main.ReminderPlugin(SimpleNamespace(), {
+    instance = reminder_main.ReminderPlugin(SimpleNamespace(), {
         "group_create_policy": "all", "admin_users": ["QQ:alice"],
     })
+    instance._scheduler = AsyncIOScheduler()
+    return instance
 
 
 async def create(plugin, *, important=False, user="alice", group="group-1"):

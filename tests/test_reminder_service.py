@@ -133,7 +133,7 @@ def test_edit_preserves_validation_and_rescheduling(reminder_main, tmp_path: Pat
         record = (await plugin._storage.load())[sid][0]
         assert record["content"] == "new"
         assert record["time"] == "2099-01-02 10:00"
-        assert removed == ["job-1"]
+        assert removed == []
         assert scheduled == [(sid, "job-1")]
 
     asyncio.run(run())

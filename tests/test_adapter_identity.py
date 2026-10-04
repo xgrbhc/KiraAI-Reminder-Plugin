@@ -6,6 +6,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from _events import batch, message, observe
 
 from _loader import load_plugin_module
@@ -323,6 +324,7 @@ def test_tools_store_scoped_ownership_and_check_same_adapter_admin(reminder_main
         plugin = reminder_main.ReminderPlugin(SimpleNamespace(), {
             "admin_users": ["QQ:123"], "group_create_policy": "all",
         })
+        plugin._scheduler = AsyncIOScheduler()
         events = [tool_event(adapter) for adapter in ("QQ", "Telegram")]
         for event in events:
             result = await plugin.set_reminder(event, content="private", time="2030-01-01 10:00")
@@ -357,6 +359,7 @@ def test_important_delete_token_cannot_cross_adapter_even_for_scoped_admin(remin
         plugin = reminder_main.ReminderPlugin(SimpleNamespace(), {
             "admin_users": ["QQ:123", "Telegram:123"], "group_create_policy": "all",
         })
+        plugin._scheduler = AsyncIOScheduler()
         qq = batch(message("123", group="456"))
         telegram = batch(message("123", group="456"), adapter="Telegram")
         await plugin.set_reminder(qq, content="important", time="2030-01-01 10:00")
