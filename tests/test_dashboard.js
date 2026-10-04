@@ -171,6 +171,155 @@ test('user filtering applies to reminders, deliveries, and counts', async () => 
     assert.equal(h.ui.importantCount.value, 0)
 })
 
+test('manual scan refreshes sessions, users and both lists without changing selections or writing', async () => {
+    let refreshing = false
+    const h = dashboard({ get: endpoint => ({ status: 'ok', data: endpoint === 'sessions'
+        ? [{ id: 'A:dm:u1', users: refreshing ? [{ id: 'u1', name: 'Updated' }, { id: 'u2', name: 'New user' }]
+            : [{ id: 'u1', name: 'Original' }] }, ...(refreshing ? [{ id: 'B:gm:g1', users: [] }] : [])]
+        : endpoint.startsWith('deliveries/') ? [issue(refreshing ? 'new-delivery' : 'delivery1')]
+        : refreshing ? [record(), record('job2', 'u2')] : [record()] }) })
+    await h.load(); h.ui.selectedUserId.value = 'u1'; refreshing = true
+    await h.ui.scanNetwork()
+    assert.equal(h.ui.sessionId.value, 'A:dm:u1')
+    assert.equal(h.ui.selectedUserId.value, 'u1')
+    assert.deepEqual(plain(h.ui.currentSessionUsers.value), [{ id: 'u1', name: 'Updated' }, { id: 'u2', name: 'New user' }])
+    assert.equal(h.ui.availableSessions.value.length, 2)
+    assert.equal(h.ui.reminders.value.length, 2)
+    assert.equal(h.ui.filteredReminders.value.length, 1)
+    assert.equal(h.ui.deliveryIssues.value[0].delivery_id, 'new-delivery')
+    assert.equal(h.calls.filter(call => call.endpoint === 'sessions').length, 2)
+    assert.equal(h.ui.scanning.value, false)
+    assert.equal(h.ui.actionsDisabled.value, false)
+    assert.equal(h.posts().length, 0)
+    assert.equal(h.timers.size, 0)
+})
+
+test('manual scan can discover sessions without choosing one automatically', async () => {
+    const h = dashboard(); await h.mount()
+    await h.ui.scanNetwork()
+    assert.equal(h.ui.sessionId.value, '')
+    assert.equal(h.ui.availableSessions.value[0].id, 'A:dm:u1')
+    assert.equal(h.calls.filter(call => call.endpoint === 'sessions').length, 2)
+    assert.equal(h.calls.filter(call => call.endpoint.startsWith('reminders/')).length, 0)
+    assert.equal(h.posts().length, 0)
+    assert.equal(h.ui.scanning.value, false)
+})
+
+for (const malformed of [false, true]) {
+    test(`failed metadata scan preserves users and does not invalidate reminder data (malformed=${malformed})`, async () => {
+        let refreshing = false
+        const h = dashboard({ get: endpoint => {
+            if (refreshing && endpoint === 'sessions') {
+                if (malformed) return { status: 'ok', data: null }
+                throw new Error('metadata offline')
+            }
+            return { status: 'ok', data: endpoint === 'sessions'
+                ? [{ id: 'A:dm:u1', users: [{ id: 'u1', name: 'Original' }] }]
+                : endpoint.startsWith('deliveries/') ? [] : [record(refreshing ? 'new' : 'job1')] }
+        } })
+        await h.load(); h.ui.selectedUserId.value = 'u1'; refreshing = true
+        await h.ui.scanNetwork()
+        assert.equal(h.ui.currentSessionUsers.value[0].name, 'Original')
+        assert.equal(h.ui.selectedUserId.value, 'u1')
+        assert.equal(h.ui.reminders.value[0].job_id, 'new')
+        assert.equal(h.ui.actionsDisabled.value, false)
+        assert.equal(h.ui.loadError.value, '')
+        assert.equal(h.ui.scanning.value, false)
+        assert.equal(h.ui.toasts.value[0].title, h.ui.t('sessionFailed'))
+    })
+}
+
+test('duplicate manual scans do not overlap and metadata does not prolong the write lock', async () => {
+    const metadata = deferred(), read = deferred()
+    let refreshing = false
+    const h = dashboard({ get: endpoint => {
+        if (refreshing && endpoint === 'sessions') return metadata.promise
+        if (refreshing && endpoint.startsWith('reminders/')) return read.promise
+        return { status: 'ok', data: endpoint === 'sessions' ? [{ id: 'A:dm:u1' }]
+            : endpoint.startsWith('deliveries/') ? [] : [record()] }
+    } })
+    await h.load(); refreshing = true
+    const scan = h.ui.scanNetwork(), calls = h.calls.length
+    await h.ui.scanNetwork(); await h.ui.scanNetwork()
+    assert.equal(h.calls.length, calls)
+    assert.equal(h.ui.scanning.value, true)
+    assert.equal(h.ui.actionsDisabled.value, true)
+    read.resolve({ status: 'ok', data: [record()] })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(h.ui.loading.value, false)
+    assert.equal(h.ui.scanning.value, true)
+    assert.equal(h.ui.actionsDisabled.value, false)
+    await h.ui.doAction('pause', 'job1')
+    assert.equal(h.posts().length, 1)
+    assert.equal(h.calls.filter(call => call.endpoint === 'sessions').length, 2)
+    metadata.resolve({ status: 'ok', data: [{ id: 'A:dm:u1' }] }); await scan
+    assert.equal(h.ui.scanning.value, false)
+})
+
+test('late initialization metadata cannot replace a newer manual scan', async () => {
+    const initial = deferred()
+    let metadataReads = 0
+    const h = dashboard({ get: endpoint => endpoint === 'sessions'
+        ? ++metadataReads === 1 ? initial.promise : { status: 'ok', data: [{ id: 'New:dm:u1' }] }
+        : { status: 'ok', data: [] } })
+    await h.mount(); h.ui.sessionId.value = 'A:dm:u1'; await h.ui.scanNetwork()
+    initial.resolve({ status: 'ok', data: [{ id: 'Old:dm:u1' }] })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(h.ui.availableSessions.value[0].id, 'New:dm:u1')
+    assert.equal(h.ui.sessionId.value, 'A:dm:u1')
+    assert.equal(h.ui.selectedUserId.value, null)
+})
+
+test('session changes during scan keep the new session and its user selection', async () => {
+    const metadata = deferred(), old = deferred()
+    let refreshing = false
+    const h = dashboard({ get: endpoint => {
+        if (refreshing && endpoint === 'sessions') return metadata.promise
+        if (refreshing && endpoint === 'reminders/A%3Adm%3Au1') return old.promise
+        return { status: 'ok', data: endpoint.startsWith('reminders/') ? [record('new', 'u2')] : [] }
+    } })
+    await h.load(); refreshing = true
+    const scan = h.ui.scanNetwork()
+    h.ui.sessionId.value = 'B:dm:u2'; await h.ui.fetchReminders(); h.ui.selectedUserId.value = 'u2'
+    old.resolve({ status: 'ok', data: [record('old')] })
+    metadata.resolve({ status: 'ok', data: [{ id: 'B:dm:u2', users: [{ id: 'u2', name: 'Current' }] }] })
+    await scan
+    assert.equal(h.ui.sessionId.value, 'B:dm:u2')
+    assert.equal(h.ui.selectedUserId.value, 'u2')
+    assert.equal(h.ui.currentSessionUsers.value[0].name, 'Current')
+    assert.equal(h.ui.reminders.value[0].job_id, 'new')
+})
+
+test('manual scan is blocked during writes and late metadata is ignored after unmount', async () => {
+    const post = deferred(), metadata = deferred()
+    let refreshing = false
+    const h = dashboard({ post: () => post.promise, get: endpoint => {
+        if (refreshing && endpoint === 'sessions') return metadata.promise
+        return { status: 'ok', data: endpoint === 'sessions' ? [{ id: 'A:dm:u1' }]
+            : endpoint.startsWith('deliveries/') ? [] : [record()] }
+    } })
+    await h.load()
+    const write = h.ui.doAction('pause', 'job1'), calls = h.calls.length
+    await h.ui.scanNetwork()
+    assert.equal(h.calls.length, calls)
+    post.resolve({ status: 'ok', msg: 'done' }); await write
+    refreshing = true
+    const scan = h.ui.scanNetwork(), previous = plain(h.ui.availableSessions.value)
+    h.unmount(); metadata.resolve({ status: 'ok', data: [{ id: 'Late:dm:u1' }] }); await scan
+    assert.deepEqual(plain(h.ui.availableSessions.value), previous)
+    assert.equal(h.timers.size, 0)
+    const afterUnmount = h.calls.length
+    await h.ui.scanNetwork()
+    assert.equal(h.calls.length, afterUnmount)
+})
+
+test('scan button and Enter both use the full scan handler without changing utility classes', () => {
+    const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8')
+    assert(html.includes('@keyup.enter="scanNetwork"'))
+    assert(html.includes('@click="scanNetwork"'))
+    assert(html.includes(':disabled="mutationBusy || loading || scanning"'))
+})
+
 test('missing delivery status is not displayed as a known active count', async () => {
     const h = dashboard({ get: endpoint => ({ status: 'ok', data: endpoint === 'sessions' ? []
         : endpoint.startsWith('deliveries/') ? null : [record()] }) })

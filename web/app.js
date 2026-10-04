@@ -5,6 +5,7 @@ createApp({
     setup() {
         // UI state
         const loading = ref(false)
+        const scanning = ref(false)
         const reminders = ref([])
         const deliveryIssues = ref([])
         const toasts = ref([])
@@ -17,6 +18,7 @@ createApp({
         const deliveryStatusKnown = ref(false)
         const startupError = ref('')
         let requestSequence = 0
+        let sessionRequestSequence = 0
         let toastSequence = 0
         let unsubscribeContext = null
         let disposed = false
@@ -352,11 +354,27 @@ createApp({
         }
 
         const fetchSessions = async () => {
+            if (disposed) return
+            const sequence = ++sessionRequestSequence
+            const isCurrent = () => !disposed && sequence === sessionRequestSequence
             try {
                 const data = await readApi('sessions', { _t: Date.now() })
+                if (!isCurrent()) return
                 availableSessions.value = responseData(data, true).filter(session => typeof session.id === 'string')
             } catch (e) {
+                if (!isCurrent()) return
                 showToast(t('sessionFailed'), e.message, 'error')
+            }
+        }
+
+        const scanNetwork = async () => {
+            if (disposed || scanning.value || loading.value || mutationBusy.value) return
+            scanning.value = true
+            try {
+                // Metadata failures must not invalidate the current reminder snapshot.
+                await Promise.all([fetchSessions(), fetchReminders()])
+            } finally {
+                if (!disposed) scanning.value = false
             }
         }
 
@@ -412,7 +430,7 @@ createApp({
             filteredSessions,
             selectSession,
             activeCount, pausedCount, importantCount,
-            fetchReminders, doAction, reviewDelivery, formatRepeat,
+            fetchReminders, scanNetwork, scanning, doAction, reviewDelivery, formatRepeat,
             showConfirmModal, confirmMessage, deleteToken, closeModal, confirmDelete,
             pendingOperation, needsDeleteToken, confirmTitle, confirmButton, modalElement, trapModalFocus,
             mutationBusy, actionsDisabled, loadError, deliveryStatusKnown, startupError, hasCurrentSnapshot, t

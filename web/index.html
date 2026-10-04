@@ -27,7 +27,7 @@
                 <div id="session-select-container" class="relative min-w-0 w-full sm:w-auto max-w-full">
                     <div class="glass-panel px-4 py-3 flex items-center gap-3 relative z-40 hover:bg-white/5 transition-colors focus-within:ring-2 focus-within:ring-indigo-500/50 cursor-text shadow-lg">
                         <i class="fa-solid fa-layer-group shrink-0 transition-colors" :class="sessionId ? 'text-indigo-400' : 'text-gray-500'"></i>
-                        <input v-model="sessionId" :disabled="mutationBusy" @focus="showSessionDropdown = true" @blur="showSessionDropdown = false" type="text" aria-label="Session ID" placeholder="Session ID (群号/会话标志)" class="bg-transparent border-none text-sm text-gray-200 focus:outline-none min-w-0 flex-1 w-full sm:w-64 placeholder-gray-500 font-medium" @keyup.enter="fetchReminders">
+                        <input v-model="sessionId" :disabled="mutationBusy" @focus="showSessionDropdown = true" @blur="showSessionDropdown = false" type="text" aria-label="Session ID" placeholder="Session ID (群号/会话标志)" class="bg-transparent border-none text-sm text-gray-200 focus:outline-none min-w-0 flex-1 w-full sm:w-64 placeholder-gray-500 font-medium" @keyup.enter="scanNetwork">
                         <button type="button" :disabled="mutationBusy" aria-label="选择会话" class="shrink-0" @pointerdown.prevent @click="showSessionDropdown = !showSessionDropdown"><i class="fa-solid fa-chevron-down text-xs text-gray-500 transition-transform hover:text-white" :class="{'rotate-180': showSessionDropdown}"></i></button>
                     </div>
                     
@@ -47,8 +47,8 @@
                     </transition>
                 </div>
 
-                <button :disabled="mutationBusy" @click="fetchReminders" class="glass-panel w-full sm:w-auto shrink-0 px-6 py-3 hover:bg-white/10 transition-all hover:scale-105 active:scale-95 text-sm font-bold flex items-center justify-center gap-2 relative z-40 shadow-lg text-white">
-                    <i class="fa-solid fa-satellite-dish" :class="{'animate-pulse text-indigo-400': loading}"></i> 扫描网络
+                <button :disabled="mutationBusy || loading || scanning" @click="scanNetwork" class="glass-panel w-full sm:w-auto shrink-0 px-6 py-3 hover:bg-white/10 transition-all hover:scale-105 active:scale-95 text-sm font-bold flex items-center justify-center gap-2 relative z-40 shadow-lg text-white">
+                    <i class="fa-solid fa-satellite-dish" :class="{'animate-pulse text-indigo-400': loading || scanning}"></i> 扫描网络
                 </button>
             </div>
         </header>

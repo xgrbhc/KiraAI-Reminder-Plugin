@@ -125,7 +125,7 @@ test('session controls and menu fit their container at narrow widths', () => {
     const menu = html.match(/v-show="showSessionDropdown" class="([^"]+)"/)[1].split(/\s+/)
     for (const name of ['w-full', 'sm:w-80', 'max-w-full']) assert.ok(menu.includes(name))
     assert.ok(!menu.includes('w-80'))
-    assert.match(html, /@click="fetchReminders" class="[^"]*w-full sm:w-auto shrink-0/)
+    assert.match(html, /@click="scanNetwork" class="[^"]*w-full sm:w-auto shrink-0/)
 })
 
 test('long reminder metadata wraps while card actions retain their size and visibility', () => {

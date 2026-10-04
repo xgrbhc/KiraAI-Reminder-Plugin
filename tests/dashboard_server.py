@@ -59,13 +59,23 @@ const copy = value => JSON.parse(JSON.stringify(value));
 const ok = data => ({status:'ok',data});
 const error = msg => ({status:'error',msg});
 const tokens = new Map();
+let sessionReads = 0;
 window.PluginPageContext = {
  ready: async () => ({pluginId:'reminder_plugin',locale:'zh'}),
  onContext: () => () => {},
  api: {
   async get(endpoint) {
    if(readDelay) await new Promise(resolve=>setTimeout(resolve,readDelay));
-   if(endpoint==='sessions') return ok(Object.entries(state).map(([id,s])=>({id,count:s.reminders.length,users:[...new Map(s.reminders.map(r=>[r.creator_id,{id:r.creator_id,name:r.creator_name}])).values()]})));
+   if(endpoint==='sessions') {
+    // Simulate external reminder changes only in the opt-in scan preview.
+    if(preview.has('scan_update') && ++sessionReads===2) {
+     for(const r of state['Test:dm:alice'].reminders) r.creator_name='Alice（新昵称）';
+     const r={job_id:'scan-new',content:'隔离测试：新用户的提醒',time:'2030-01-01 13:00',repeat:'none',creator_id:'charlie',owner_id:'charlie',creator_name:'Charlie'};
+     state['Test:dm:alice'].reminders.push(r);
+     state['Test:dm:charlie']={reminders:[{...r,job_id:'scan-new-session'}],deliveries:[]};
+    }
+    return ok(Object.entries(state).map(([id,s])=>({id,count:s.reminders.length,users:[...new Map(s.reminders.map(r=>[r.creator_id,{id:r.creator_id,name:r.creator_name}])).values()]})));
+   }
    const [kind,...parts]=endpoint.split('/'); const sid=decodeURIComponent(parts.join('/'));
    return state[sid] && ['reminders','deliveries'].includes(kind) ? ok(copy(state[sid][kind])) : error('Test session not found');
   },
