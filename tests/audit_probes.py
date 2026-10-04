@@ -3,7 +3,7 @@
 Run with: python -m pytest tests/audit_probes.py -q -s
 Some probes assert an observed defect to make its reproduction deterministic.
 Passing here means the observation was reproduced, not that the defect is fixed.
-R1/R2 probes now assert corrected behavior; remaining observations retain their meaning.
+R1/R2/R3 probes now assert corrected behavior; remaining observations retain their meaning.
 This filename is excluded from pytest's normal test_* discovery.
 All state is temporary; scheduler and publish callbacks are in-memory fakes.
 """
@@ -71,7 +71,7 @@ def test_failed_save_preserves_a_live_job(reminder_main, tmp_path, monkeypatch, 
     asyncio.run(run())
 
 
-def test_observed_daily_cycle_overwrites_a_concurrent_new_intent(reminder_main, tmp_path):
+def test_daily_cycle_preserves_a_concurrent_new_intent(reminder_main, tmp_path):
     async def run():
         plugin = make_autonomy_plugin(reminder_main, tmp_path)
         reached = asyncio.Event()
@@ -92,8 +92,9 @@ def test_observed_daily_cycle_overwrites_a_concurrent_new_intent(reminder_main, 
         release.set()
         await cycle
         after = await plugin._autonomy_storage.load()
-        assert after["sessions"][SID]["intents"] == []
-        observation("autonomy_lost_update", intents_before_cycle_save=1, intents_after_cycle_save=0)
+        assert after["sessions"][SID]["intents"] == before["sessions"][SID]["intents"]
+        assert after["sessions"][SID]["last_cycle_at"]
+        observation("autonomy_concurrent_update_preserved", intents_before_cycle_save=1, intents_after_cycle_save=1)
 
     asyncio.run(run())
 

@@ -286,21 +286,52 @@ class AutonomyCoordinator:
         if not (self.enabled() and self.config.daily_reflection_enabled):
             return
 
-        state = await self.load_state()
-        changed = False
+        initial_state = await self.load_state()
         for sid in self.allowed_sessions():
-            session_state = ensure_autonomy_session(state, sid)
-            if not session_state.get("enabled", True):
+            state = await self.load_state()
+            allow_create = sid not in initial_state["sessions"] and sid not in state["sessions"]
+            session_state = self._enabled_session(state, sid, allow_create=allow_create)
+            if session_state is None:
                 continue
             try:
                 await self._publish_autonomous_notice(sid, "daily_reflection")
-                session_state["last_cycle_at"] = now_str()
-                changed = True
             except Exception as e:
                 logger.warning(f"[Reminder][Autonomous] 每日自检触发失败 sid={sid}: {e}")
+                continue
+            await self._record_session_check(sid, {"last_cycle_at": now_str()}, allow_create=allow_create)
 
-        if changed:
-            await self._autonomy_storage.save(state)
+    @staticmethod
+    def _enabled_session(
+        state: dict[str, Any], sid: str, *, allow_create: bool = False,
+    ) -> dict[str, Any] | None:
+        """Keep removed or disabled sessions out of a late result commit."""
+        sessions = ensure_autonomy_root(state)["sessions"]
+        if sid not in sessions and not allow_create:
+            return None
+        session_state = ensure_autonomy_session(state, sid)
+        return session_state if session_state.get("enabled", True) else None
+
+    async def _record_session_check(
+        self, sid: str, fields: dict[str, Any], *, allow_create: bool,
+    ) -> None:
+        """Merge successful check metadata without awaiting publication under a lock."""
+        async with self._autonomy_storage.modify() as state:
+            session_state = self._enabled_session(state, sid, allow_create=allow_create)
+            if session_state is not None:
+                session_state.update(fields)
+
+    @staticmethod
+    def _matching_followup(
+        session_state: dict[str, Any] | None, intent_id: str, schedule: tuple[Any, Any],
+    ) -> dict[str, Any] | None:
+        """Match the pending occurrence, not just its stable intent ID."""
+        if session_state is None:
+            return None
+        intent = find_intent(session_state, intent_id)
+        if intent is None or intent.get("status", "active") not in ("active", "waiting_confirmation"):
+            return None
+        current_schedule = (intent.get("next_check_at", ""), intent.get("next_check_job_id", ""))
+        return intent if current_schedule == schedule else None
 
     async def followup_due_job(self) -> None:
         if not (
@@ -311,9 +342,7 @@ class AutonomyCoordinator:
             return
 
         state = await self.load_state()
-        reminders_data = await self._storage.load()
         now = get_local_now()
-        changed = False
 
         for sid in self.allowed_sessions():
             session_state = ensure_autonomy_session(state, sid)
@@ -325,29 +354,43 @@ class AutonomyCoordinator:
                 next_check_at = parse_optional_time(str(intent.get("next_check_at", "")))
                 if not next_check_at or next_check_at > now:
                     continue
-                job_id = str(intent.get("next_check_job_id", ""))
+                intent_id = str(intent.get("id", ""))
+                schedule = (intent.get("next_check_at", ""), intent.get("next_check_job_id", ""))
+                reminders_data = await self._storage.load()
+                current_state = await self.load_state()
+                current_intent = self._matching_followup(
+                    self._enabled_session(current_state, sid), intent_id, schedule,
+                )
+                if current_intent is None:
+                    continue
+                job_id = str(current_intent.get("next_check_job_id", ""))
                 if autonomous_reminder_exists(reminders_data, sid, job_id):
                     continue
                 try:
                     await self._publish_autonomous_notice(
                         sid,
                         "followup_due",
-                        intent=intent,
-                        content=str(intent.get("followup_content", "")),
+                        intent=current_intent,
+                        content=str(current_intent.get("followup_content", "")),
                     )
-                    intent["last_followup_at"] = now_str()
-                    intent["last_followup_source"] = "fallback_due_job"
-                    intent["next_check_at"] = ""
-                    intent["next_check_job_id"] = ""
-                    intent["updated_at"] = now_str()
-                    changed = True
                 except Exception as e:
                     logger.warning(
                         f"[Reminder][Autonomous] 到期跟进触发失败 sid={sid} intent={intent.get('id')}: {e}"
                     )
-
-        if changed:
-            await self._autonomy_storage.save(state)
+                    continue
+                async with self._autonomy_storage.modify() as current_state:
+                    current_intent = self._matching_followup(
+                        self._enabled_session(current_state, sid), intent_id, schedule,
+                    )
+                    if current_intent is not None:
+                        completed_at = now_str()
+                        current_intent.update({
+                            "last_followup_at": completed_at,
+                            "last_followup_source": "fallback_due_job",
+                            "next_check_at": "",
+                            "next_check_job_id": "",
+                            "updated_at": completed_at,
+                        })
 
     async def schedule_random_checks(self, force_new: bool = False) -> None:
         scheduler = self._get_scheduler()
@@ -356,53 +399,48 @@ class AutonomyCoordinator:
         if self.config.random_check_daily_count <= 0:
             return
 
-        state = await self.load_state()
-        now = get_local_now()
-        today = now.strftime("%Y-%m-%d")
-        start_hour, end_hour = random_check_window(self.config)
-        window_key = f"{start_hour}-{end_hour}"
-        changed = False
+        async with self._autonomy_storage.modify() as state:
+            now = get_local_now()
+            today = now.strftime("%Y-%m-%d")
+            start_hour, end_hour = random_check_window(self.config)
+            window_key = f"{start_hour}-{end_hour}"
 
-        for sid in self.allowed_sessions():
-            session_state = ensure_autonomy_session(state, sid)
-            if not session_state.get("enabled", True):
-                continue
-
-            current_times = session_state.get("random_check_times", [])
-            should_generate = (
-                force_new
-                or session_state.get("random_check_plan_date") != today
-                or session_state.get("random_check_window") != window_key
-                or len(current_times) != self.config.random_check_daily_count
-            )
-            if should_generate:
-                current_times = generate_random_check_times(self.config, now)
-                session_state["random_check_plan_date"] = today
-                session_state["random_check_window"] = window_key
-                session_state["random_check_times"] = current_times
-                changed = True
-
-            registered = 0
-            for time_str in current_times:
-                run_at = parse_optional_time(str(time_str))
-                if not run_at or run_at <= now:
+            for sid in self.allowed_sessions():
+                session_state = ensure_autonomy_session(state, sid)
+                if not session_state.get("enabled", True):
                     continue
-                scheduler.add_job(
-                    self._random_check_callback,
-                    trigger=DateTrigger(run_date=run_at),
-                    id=random_job_id(sid, time_str),
-                    kwargs={"sid": sid, "scheduled_time": time_str},
-                    replace_existing=True,
-                    misfire_grace_time=600,
-                )
-                registered += 1
-            logger.info(
-                f"[Reminder][Autonomous] 随机自检计划 sid={sid}, "
-                f"date={today}, times={current_times}, registered={registered}"
-            )
 
-        if changed:
-            await self._autonomy_storage.save(state)
+                current_times = session_state.get("random_check_times", [])
+                should_generate = (
+                    force_new
+                    or session_state.get("random_check_plan_date") != today
+                    or session_state.get("random_check_window") != window_key
+                    or len(current_times) != self.config.random_check_daily_count
+                )
+                if should_generate:
+                    current_times = generate_random_check_times(self.config, now)
+                    session_state["random_check_plan_date"] = today
+                    session_state["random_check_window"] = window_key
+                    session_state["random_check_times"] = current_times
+
+                registered = 0
+                for time_str in current_times:
+                    run_at = parse_optional_time(str(time_str))
+                    if not run_at or run_at <= now:
+                        continue
+                    scheduler.add_job(
+                        self._random_check_callback,
+                        trigger=DateTrigger(run_date=run_at),
+                        id=random_job_id(sid, time_str),
+                        kwargs={"sid": sid, "scheduled_time": time_str},
+                        replace_existing=True,
+                        misfire_grace_time=600,
+                    )
+                    registered += 1
+                logger.info(
+                    f"[Reminder][Autonomous] 随机自检计划 sid={sid}, "
+                    f"date={today}, times={current_times}, registered={registered}"
+                )
 
     async def random_daily_plan_job(self) -> None:
         await self.schedule_random_checks(force_new=True)
@@ -411,24 +449,22 @@ class AutonomyCoordinator:
         if not (self.enabled() and self.config.random_check_enabled):
             return
 
-        state = await self.load_state()
-        changed = False
-
         if sid not in self.allowed_sessions():
             return
-        session_state = ensure_autonomy_session(state, sid)
-        if not session_state.get("enabled", True):
+        state = await self.load_state()
+        allow_create = sid not in state["sessions"]
+        session_state = self._enabled_session(state, sid, allow_create=allow_create)
+        if session_state is None:
             return
         try:
             await self._publish_autonomous_notice(sid, "random_check")
-            session_state["last_random_check_at"] = now_str()
-            session_state["last_random_check_scheduled_at"] = str(scheduled_time or "")
-            changed = True
         except Exception as e:
             logger.warning(f"[Reminder][Autonomous] 随机自检触发失败 sid={sid}: {e}")
-
-        if changed:
-            await self._autonomy_storage.save(state)
+            return
+        await self._record_session_check(sid, {
+            "last_random_check_at": now_str(),
+            "last_random_check_scheduled_at": str(scheduled_time or ""),
+        }, allow_create=allow_create)
 
     async def mark_followup_fired(self, sid: str, reminder: dict[str, Any]) -> None:
         intent_id = str(reminder.get("intent_id") or "")
