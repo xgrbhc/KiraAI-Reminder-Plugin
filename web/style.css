@@ -22,6 +22,10 @@ body {
 .toast-close {
     background: transparent;
 }
+/* Let long URLs and identifiers wrap without splitting ordinary words early. */
+.content-wrap {
+    overflow-wrap: anywhere;
+}
 .task-card {
     transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     -webkit-font-smoothing: antialiased;

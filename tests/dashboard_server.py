@@ -38,6 +38,17 @@ const state = {
  }
 };
 const preview = new URLSearchParams(location.search);
+if (preview.has('stress')) {
+ const r = state['Test:dm:alice'].reminders[0];
+ Object.assign(r, {
+  content:'https://example.invalid/'+'long_reminder_segment_'.repeat(16),
+  creator_id:'long-name-test',creator_name:'long_display_name_'.repeat(8),
+  category:'long_category_'.repeat(8),action:'test_only_action_name_'.repeat(8),
+  important:true,paused:true,repeat:'interval',interval_minutes:1440
+ });
+ const sid = 'Test:dm:'+'session_identifier_'.repeat(8);
+ state[sid] = {reminders:[{...r,job_id:'long-session-job'}],deliveries:[]};
+}
 const listSize = Math.min(100, Math.max(0, Number(preview.get('list_size')) || 0));
 const readDelay = Math.min(2000, Math.max(0, Number(preview.get('read_delay')) || 0));
 for(let i=2;i<listSize;i++) state['Test:dm:alice'].reminders.push({
@@ -83,7 +94,8 @@ window.PluginPageContext = {
     else if(action==='resume') r.paused=false;
     else return error('Invalid test action');
    }
-   return {status:'ok',msg:'隔离测试操作成功（无真实副作用）：'+endpoint+' / '+(payload.job_id||payload.delivery_id||'')};
+   const detail = preview.has('stress') ? 'long_notification_segment_'.repeat(8) : '';
+   return {status:'ok',msg:'隔离测试操作成功（无真实副作用）：'+endpoint+' / '+(payload.job_id||payload.delivery_id||'')+detail};
   }
  }
 };

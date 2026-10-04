@@ -11,7 +11,7 @@
     <!-- Component defaults must precede utility overrides; see FRONTEND_MAINTENANCE.md. -->
     <link rel="stylesheet" href="./vendor/tailwind.min.css">
 </head>
-<body class="p-6 md:p-12 overflow-x-hidden">
+<body class="p-4 sm:p-6 md:p-12 overflow-x-hidden">
     <div id="app" v-cloak class="max-w-6xl mx-auto">
         <!-- Header -->
         <header class="flex flex-col xl:flex-row justify-between xl:items-center mb-12 animate-fade-in relative z-50">
@@ -22,32 +22,32 @@
                 <p class="text-gray-400 text-sm md:text-base opacity-80">智能多维日程调度中枢</p>
             </div>
             
-            <div class="mt-6 xl:mt-0 flex flex-wrap gap-4 relative z-40">
+            <div class="mt-6 xl:mt-0 min-w-0 flex flex-wrap gap-4 relative z-40">
                 <!-- Session Select -->
-                <div id="session-select-container" class="relative">
+                <div id="session-select-container" class="relative min-w-0 w-full sm:w-auto max-w-full">
                     <div class="glass-panel px-4 py-3 flex items-center gap-3 relative z-40 hover:bg-white/5 transition-colors focus-within:ring-2 focus-within:ring-indigo-500/50 cursor-text shadow-lg">
-                        <i class="fa-solid fa-layer-group transition-colors" :class="sessionId ? 'text-indigo-400' : 'text-gray-500'"></i>
-                        <input v-model="sessionId" :disabled="mutationBusy" @focus="showSessionDropdown = true" @blur="showSessionDropdown = false" type="text" aria-label="Session ID" placeholder="Session ID (群号/会话标志)" class="bg-transparent border-none text-sm text-gray-200 focus:outline-none w-64 placeholder-gray-500 font-medium" @keyup.enter="fetchReminders">
-                        <button type="button" :disabled="mutationBusy" aria-label="选择会话" @pointerdown.prevent @click="showSessionDropdown = !showSessionDropdown"><i class="fa-solid fa-chevron-down text-xs text-gray-500 transition-transform hover:text-white" :class="{'rotate-180': showSessionDropdown}"></i></button>
+                        <i class="fa-solid fa-layer-group shrink-0 transition-colors" :class="sessionId ? 'text-indigo-400' : 'text-gray-500'"></i>
+                        <input v-model="sessionId" :disabled="mutationBusy" @focus="showSessionDropdown = true" @blur="showSessionDropdown = false" type="text" aria-label="Session ID" placeholder="Session ID (群号/会话标志)" class="bg-transparent border-none text-sm text-gray-200 focus:outline-none min-w-0 flex-1 w-full sm:w-64 placeholder-gray-500 font-medium" @keyup.enter="fetchReminders">
+                        <button type="button" :disabled="mutationBusy" aria-label="选择会话" class="shrink-0" @pointerdown.prevent @click="showSessionDropdown = !showSessionDropdown"><i class="fa-solid fa-chevron-down text-xs text-gray-500 transition-transform hover:text-white" :class="{'rotate-180': showSessionDropdown}"></i></button>
                     </div>
                     
                     <transition name="fade">
-                        <div v-show="showSessionDropdown" class="absolute top-full left-0 mt-3 w-80 bg-[#12121a]/95 backdrop-blur-2xl border border-indigo-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.7)] z-40 max-h-80 overflow-y-auto custom-scrollbar rounded-xl">
+                        <div v-show="showSessionDropdown" class="absolute top-full left-0 mt-3 w-full sm:w-80 max-w-full bg-[#12121a]/95 backdrop-blur-2xl border border-indigo-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.7)] z-40 max-h-80 overflow-y-auto custom-scrollbar rounded-xl">
                             <div v-if="availableSessions.length === 0" class="p-5 text-center text-sm text-gray-400 font-medium">基站扫描中或无存量活跃数据...</div>
                             <div v-else>
                                 <button type="button" v-for="s in filteredSessions" :key="s.id" :disabled="mutationBusy" @pointerdown.prevent @click="selectSession(s)" class="w-full text-left p-4 hover:bg-indigo-500/20 cursor-pointer transition-all border-b border-white/5 last:border-0 flex justify-between items-center group">
-                                    <div class="flex flex-col overflow-hidden">
+                                    <div class="min-w-0 flex flex-col overflow-hidden">
                                         <span class="text-sm font-bold text-gray-200 group-hover:text-indigo-300 truncate">{{ s.id }}</span>
                                         <span class="text-xs text-indigo-200/50 mt-1 font-medium">{{ s.count }} 个活动线程检测到</span>
                                     </div>
-                                    <i class="fa-solid fa-arrow-right text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-2 group-hover:translate-x-0 duration-300"></i>
+                                    <i class="fa-solid fa-arrow-right shrink-0 text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-2 group-hover:translate-x-0 duration-300"></i>
                                 </button>
                             </div>
                         </div>
                     </transition>
                 </div>
 
-                <button :disabled="mutationBusy" @click="fetchReminders" class="glass-panel px-6 py-3 hover:bg-white/10 transition-all hover:scale-105 active:scale-95 text-sm font-bold flex items-center gap-2 relative z-40 shadow-lg text-white">
+                <button :disabled="mutationBusy" @click="fetchReminders" class="glass-panel w-full sm:w-auto shrink-0 px-6 py-3 hover:bg-white/10 transition-all hover:scale-105 active:scale-95 text-sm font-bold flex items-center justify-center gap-2 relative z-40 shadow-lg text-white">
                     <i class="fa-solid fa-satellite-dish" :class="{'animate-pulse text-indigo-400': loading}"></i> 扫描网络
                 </button>
             </div>
@@ -66,44 +66,44 @@
                 <button @click="selectedUserId = null" class="px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 border" :class="selectedUserId === null ? 'bg-indigo-500 text-white border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'">
                     <i class="fa-solid fa-earth-asia mr-1"></i> {{ t('allUsers') }}
                 </button>
-                <button v-for="u in currentSessionUsers" :key="u.id" @click="selectedUserId = u.id" class="px-4 py-2 rounded-full text-sm flex items-center gap-2 transition-all duration-300 border" :class="selectedUserId === u.id ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'">
-                    <div class="w-5 h-5 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-[10px] text-white font-bold">{{ u.name ? u.name.charAt(0).toUpperCase() : '?' }}</div>
-                    <span>{{ u.name || '未知' }}</span>
+                <button v-for="u in currentSessionUsers" :key="u.id" @click="selectedUserId = u.id" class="min-w-0 max-w-full px-4 py-2 rounded-full text-sm flex items-center gap-2 transition-all duration-300 border" :class="selectedUserId === u.id ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'">
+                    <div class="w-5 h-5 shrink-0 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-[10px] text-white font-bold">{{ u.name ? u.name.charAt(0).toUpperCase() : '?' }}</div>
+                    <span class="min-w-0 content-wrap">{{ u.name || '未知' }}</span>
                 </button>
             </div>
         </div>
 
         <!-- Stats / Quick Overview -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-6 mb-10 animate-fade-in" style="animation-delay: 0.1s">
-            <div class="glass-panel p-6 flex flex-col justify-center items-center relative overflow-hidden group">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-10 animate-fade-in" style="animation-delay: 0.1s">
+            <div class="glass-panel p-4 sm:p-6 flex flex-col justify-center items-center relative overflow-hidden group">
                 <div class="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-purple-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                 <div class="text-4xl font-bold mb-1">{{ filteredReminders.length }}</div>
                 <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">{{ t('total') }}</div>
             </div>
-            <div class="glass-panel p-6 flex flex-col justify-center items-center relative overflow-hidden group">
+            <div class="glass-panel p-4 sm:p-6 flex flex-col justify-center items-center relative overflow-hidden group">
                 <div class="absolute inset-0 bg-gradient-to-br from-green-500/10 to-emerald-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                 <div class="text-4xl font-bold mb-1 text-green-400">{{ activeCount ?? '—' }}</div>
                 <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">活路中枢</div>
             </div>
-            <div class="glass-panel p-6 flex flex-col justify-center items-center relative overflow-hidden group">
+            <div class="glass-panel p-4 sm:p-6 flex flex-col justify-center items-center relative overflow-hidden group">
                 <div class="absolute inset-0 bg-gradient-to-br from-yellow-500/10 to-orange-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                 <div class="text-4xl font-bold mb-1 text-yellow-400">{{ importantCount }}</div>
                 <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">重要警戒</div>
             </div>
-            <div class="glass-panel p-6 flex flex-col justify-center items-center relative overflow-hidden group">
+            <div class="glass-panel p-4 sm:p-6 flex flex-col justify-center items-center relative overflow-hidden group">
                 <div class="absolute inset-0 bg-gradient-to-br from-gray-500/10 to-slate-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                 <div class="text-4xl font-bold mb-1 text-gray-400">{{ pausedCount }}</div>
                 <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">已挂起</div>
             </div>
         </div>
 
-        <section v-if="filteredDeliveryIssues.length" class="glass-panel p-6 mb-8 border-yellow-500/30" aria-label="待处理提醒投递">
+        <section v-if="filteredDeliveryIssues.length" class="glass-panel p-4 sm:p-6 mb-8 border-yellow-500/30" aria-label="待处理提醒投递">
             <h2 class="text-xl font-semibold text-yellow-300 mb-2">待处理的提醒投递（{{ filteredDeliveryIssues.length }}）</h2>
             <p class="text-sm text-gray-300 mb-5">“未确认”表示模型可能已经处理过；重试可能造成重复提醒或重复动作。</p>
             <div v-for="issue in filteredDeliveryIssues" :key="issue.delivery_id" class="border-t border-white/10 py-4 flex flex-col md:flex-row md:items-center gap-4 justify-between">
                 <div class="min-w-0">
                     <p class="text-sm text-yellow-200">{{ issue.status === 'failed' ? '处理失败' : issue.status === 'awaiting_llm' ? '等待模型处理' : '结果未确认' }} · {{ issue.reminder?.time || '时间未知' }}</p>
-                    <p class="break-words">{{ issue.reminder?.content || '无内容' }}</p>
+                    <p class="content-wrap">{{ issue.reminder?.content || '无内容' }}</p>
                     <p v-if="issue.reminder?.action" class="text-xs text-red-300">包含自动动作；重试前请确认是否已执行。</p>
                     <p v-if="issue.missed_count" class="text-xs text-gray-400">另有 {{ issue.missed_count }} 次周期触发待检查</p>
                 </div>
@@ -115,7 +115,7 @@
         </section>
 
         <!-- Task List -->
-        <div :aria-busy="loading" class="glass-panel p-8 animate-fade-in" style="animation-delay: 0.2s">
+        <div :aria-busy="loading" class="glass-panel p-4 sm:p-8 animate-fade-in" style="animation-delay: 0.2s">
             <h2 class="text-2xl font-semibold mb-6 flex items-center gap-3">
                 <i class="fa-solid fa-list-check text-indigo-400"></i> 行动清单
             </h2>
@@ -138,25 +138,25 @@
             </div>
 
             <div v-else class="space-y-4">
-                <div v-for="(task, index) in filteredReminders" :key="task.job_id || index" class="task-card glass-panel p-6 pb-8 flex flex-col md:flex-row justify-between md:items-center gap-4 border-l-4" :class="task.important ? 'border-l-yellow-400' : 'border-l-transparent'">
+                <div v-for="(task, index) in filteredReminders" :key="task.job_id || index" class="task-card glass-panel p-4 pb-6 sm:p-6 sm:pb-8 flex flex-col md:flex-row justify-between md:items-center gap-4 border-l-4" :class="task.important ? 'border-l-yellow-400' : 'border-l-transparent'">
                     
-                    <div class="flex-1">
-                        <div class="flex items-center gap-3 mb-3">
-                            <span v-if="task.important" class="text-yellow-400 text-sm" title="重要提醒"><i class="fa-solid fa-star"></i></span>
-                            <span class="text-xs px-3 py-1 rounded-full bg-white/10 text-gray-200 backdrop-blur-md uppercase tracking-wide">{{ formatRepeat(task.repeat, task.interval_minutes) }}</span>
-                            <span v-if="task.category" class="text-xs px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">{{ task.category }}</span>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3">
+                            <span v-if="task.important" class="shrink-0 text-yellow-400 text-sm" title="重要提醒"><i class="fa-solid fa-star"></i></span>
+                            <span class="max-w-full content-wrap text-xs px-3 py-1 rounded-full bg-white/10 text-gray-200 backdrop-blur-md uppercase tracking-wide">{{ formatRepeat(task.repeat, task.interval_minutes) }}</span>
+                            <span v-if="task.category" class="min-w-0 max-w-full content-wrap text-xs px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">{{ task.category }}</span>
                             <span v-if="task.paused" class="text-xs px-3 py-1 rounded-full bg-gray-500/40 text-gray-300">挂起中</span>
                             <span v-if="pendingJobIds.has(task.job_id)" class="text-xs px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-200">待确认投递</span>
                         </div>
-                        <h3 class="text-xl font-medium text-white mb-2" :class="{'line-through opacity-50': task.paused}">{{ task.content }}</h3>
+                        <h3 class="content-wrap text-xl font-medium text-white mb-2" :class="{'line-through opacity-50': task.paused}">{{ task.content }}</h3>
                         <div class="text-sm text-gray-400 flex flex-wrap gap-x-6 gap-y-2 mt-2">
-                            <span class="flex items-center gap-2"><i class="fa-regular fa-clock"></i> {{ task.time }}</span>
-                            <span class="flex items-center gap-2"><i class="fa-regular fa-user"></i> {{ task.creator_name || '未知源' }} <span class="text-xs opacity-50">({{task.creator_id}})</span></span>
-                            <span v-if="task.action" class="flex items-center gap-2"><i class="fa-solid fa-bolt text-yellow-500"></i> {{ task.action }}</span>
+                            <span class="min-w-0 max-w-full flex items-center gap-2"><i class="fa-regular fa-clock shrink-0"></i> <span class="min-w-0 content-wrap">{{ task.time }}</span></span>
+                            <span class="min-w-0 max-w-full flex items-center gap-2"><i class="fa-regular fa-user shrink-0"></i> <span class="min-w-0 content-wrap">{{ task.creator_name || '未知源' }} <span class="text-xs opacity-50">({{task.creator_id}})</span></span></span>
+                            <span v-if="task.action" class="min-w-0 max-w-full flex items-center gap-2"><i class="fa-solid fa-bolt shrink-0 text-yellow-500"></i> <span class="min-w-0 content-wrap">{{ task.action }}</span></span>
                         </div>
                     </div>
 
-                    <div class="flex items-center justify-end gap-3 md:opacity-0 md:group-hover:opacity-100 opacity-100 transition-opacity" style="opacity: 1;">
+                    <div class="shrink-0 flex items-center justify-end gap-3 md:opacity-0 md:group-hover:opacity-100 opacity-100 transition-opacity" style="opacity: 1;">
                         <button :disabled="actionsDisabled" v-if="!task.paused" @click="doAction('pause', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-yellow-500/20 hover:text-yellow-400 flex justify-center items-center transition-all hover:scale-110" title="暂停任务">
                             <i class="fa-solid fa-pause"></i>
                         </button>
@@ -176,24 +176,24 @@
         <!-- In-page confirmation works inside the host's sandboxed iframe. -->
         <transition name="fade">
             <div v-if="showConfirmModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-[100] p-4">
-                <div ref="modalElement" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description" @keydown.esc.prevent.stop="closeModal" @keydown.tab="trapModalFocus" class="dialog-panel glass-panel p-8 max-w-md w-full relative animate-fade-in shadow-2xl border-yellow-500/30">
+                <div ref="modalElement" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description" @keydown.esc.prevent.stop="closeModal" @keydown.tab="trapModalFocus" class="dialog-panel glass-panel p-4 sm:p-8 max-w-md w-full relative animate-fade-in shadow-2xl border-yellow-500/30">
                     <div class="absolute top-4 right-4 flex gap-2">
-                        <button :disabled="mutationBusy" :aria-label="t('close')" @click="closeModal" class="text-gray-400 hover:text-white transition-colors">
+                        <button :disabled="mutationBusy" :aria-label="t('close')" @click="closeModal" class="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-white transition-colors">
                             <i class="fa-solid fa-xmark text-xl"></i>
                         </button>
                     </div>
                     
-                    <div class="flex items-center gap-4 mb-6">
+                    <div class="flex items-center gap-4 mb-6 pr-8">
                         <div class="w-12 h-12 rounded-full bg-yellow-500/20 flex items-center justify-center text-yellow-400 text-2xl shrink-0">
                             <i class="fa-solid fa-triangle-exclamation"></i>
                         </div>
-                        <div>
-                            <h3 id="confirm-title" class="text-xl font-bold text-white">{{ confirmTitle }}</h3>
+                        <div class="min-w-0 flex-1">
+                            <h3 id="confirm-title" class="content-wrap text-xl font-bold text-white">{{ confirmTitle }}</h3>
                             <p class="text-sm text-yellow-400/80 mt-1 break-all">{{ pendingOperation?.sid }}</p>
                         </div>
                     </div>
                     
-                    <div id="confirm-description" class="bg-black/30 rounded-lg p-4 mb-6 text-gray-300 text-sm leading-relaxed whitespace-pre-wrap break-words border border-white/5">
+                    <div id="confirm-description" class="content-wrap bg-black/30 rounded-lg p-4 mb-6 text-gray-300 text-sm leading-relaxed whitespace-pre-wrap border border-white/5">
                         {{ confirmMessage }}
                         <p v-if="pendingOperation?.content" class="mt-3 text-white">{{ pendingOperation.content }}</p>
                     </div>
@@ -204,10 +204,10 @@
                     </div>
                     
                     <div class="flex gap-4">
-                        <button :disabled="mutationBusy" @click="closeModal" class="flex-1 py-3 px-4 rounded-lg bg-white/5 hover:bg-white/10 text-white font-medium transition-colors border border-white/10">
+                        <button :disabled="mutationBusy" @click="closeModal" class="min-w-0 content-wrap flex-1 py-3 px-4 rounded-lg bg-white/5 hover:bg-white/10 text-white font-medium transition-colors border border-white/10">
                             {{ t('cancel') }}
                         </button>
-                        <button :disabled="actionsDisabled" @click="confirmDelete" class="flex-1 py-3 px-4 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-400 font-bold transition-colors border border-red-500/30 flex justify-center items-center gap-2">
+                        <button :disabled="actionsDisabled" @click="confirmDelete" class="min-w-0 content-wrap flex-1 py-3 px-4 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-400 font-bold transition-colors border border-red-500/30 flex justify-center items-center gap-2">
                             {{ confirmButton }}
                         </button>
                     </div>
@@ -217,12 +217,12 @@
 
         <!-- Toast Notifications -->
         <div aria-live="polite" class="fixed bottom-6 left-4 right-4 md:left-auto flex flex-col gap-3 z-[110]">
-            <div v-for="toast in toasts" :key="toast.id" data-toast class="glass-panel toast-panel px-6 py-4 flex items-center gap-4 shadow-2xl w-full max-w-sm" :class="toast.type === 'error' ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-emerald-500'">
-                <i v-if="toast.type === 'error'" class="fa-solid fa-triangle-exclamation text-red-500 text-2xl"></i>
-                <i v-else class="fa-solid fa-circle-check text-emerald-500 text-2xl"></i>
+            <div v-for="toast in toasts" :key="toast.id" data-toast class="glass-panel toast-panel px-4 sm:px-6 py-4 flex items-center gap-3 sm:gap-4 shadow-2xl w-full max-w-sm" :class="toast.type === 'error' ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-emerald-500'">
+                <i v-if="toast.type === 'error'" class="fa-solid fa-triangle-exclamation shrink-0 text-red-500 text-2xl"></i>
+                <i v-else class="fa-solid fa-circle-check shrink-0 text-emerald-500 text-2xl"></i>
                 <div class="min-w-0 flex-1">
-                    <p class="font-bold text-sm tracking-wide">{{ toast.title }}</p>
-                    <p class="text-xs text-gray-400 mt-1 break-words">{{ toast.message }}</p>
+                    <p class="content-wrap font-bold text-sm tracking-wide">{{ toast.title }}</p>
+                    <p class="content-wrap text-xs text-gray-400 mt-1">{{ toast.message }}</p>
                 </div>
                 <button type="button" @click="dismissToast(toast.id)" :aria-label="t('closeToast')" :title="t('closeToast')" class="toast-close shrink-0 w-8 h-8 rounded-full text-gray-400 hover:text-white transition-colors">
                     <i class="fa-solid fa-xmark" aria-hidden="true"></i>

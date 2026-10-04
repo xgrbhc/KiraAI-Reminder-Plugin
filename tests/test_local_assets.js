@@ -114,3 +114,47 @@ test('all template icons exist in the bundled free icon styles', () => {
     }
     assert.doesNotMatch(read('index.html'), /fa-shield-check/)
 })
+
+test('session controls and menu fit their container at narrow widths', () => {
+    const html = read('index.html')
+    const container = html.match(/id="session-select-container" class="([^"]+)"/)[1].split(/\s+/)
+    for (const name of ['min-w-0', 'w-full', 'sm:w-auto', 'max-w-full']) assert.ok(container.includes(name))
+    const input = html.match(/<input v-model="sessionId"[^>]* class="([^"]+)"/)[1].split(/\s+/)
+    for (const name of ['min-w-0', 'flex-1', 'w-full', 'sm:w-64']) assert.ok(input.includes(name))
+    assert.ok(!input.includes('w-64'))
+    const menu = html.match(/v-show="showSessionDropdown" class="([^"]+)"/)[1].split(/\s+/)
+    for (const name of ['w-full', 'sm:w-80', 'max-w-full']) assert.ok(menu.includes(name))
+    assert.ok(!menu.includes('w-80'))
+    assert.match(html, /@click="fetchReminders" class="[^"]*w-full sm:w-auto shrink-0/)
+})
+
+test('long reminder metadata wraps while card actions retain their size and visibility', () => {
+    const html = read('index.html')
+    assert.match(read('style.css'), /\.content-wrap\s*\{\s*overflow-wrap:\s*anywhere;\s*\}/)
+    assert.match(html, /<div class="min-w-0 flex-1">\s*<div class="flex flex-wrap items-center/)
+    assert.match(html, /<h3 class="content-wrap [^"]*"[^>]*>\{\{ task\.content \}\}/)
+    assert.match(html, /v-if="task.category" class="min-w-0 max-w-full content-wrap/)
+    assert.match(html, /<span class="min-w-0 content-wrap">\{\{ task\.creator_name/)
+    assert.match(html, /<span class="min-w-0 content-wrap">\{\{ task\.action \}\}/)
+    assert.match(html, /v-for="u in currentSessionUsers"[^>]*class="min-w-0 max-w-full/)
+    assert.match(html, /class="shrink-0 flex items-center justify-end [^"]*" style="opacity: 1;"/)
+    for (const action of ['pause', 'resume', 'delete']) {
+        const classes = html.match(new RegExp(`@click="doAction\\('${action}', task.job_id\\)" class="([^"]+)"`))[1]
+        for (const name of ['w-12', 'h-12', 'rounded-full']) assert.ok(classes.split(/\s+/).includes(name))
+    }
+})
+
+test('mobile spacing and bounded dialog styles are present in rebuilt assets', () => {
+    const html = read('index.html')
+    assert.match(html, /<body class="p-4 sm:p-6 md:p-12 overflow-x-hidden">/)
+    assert.match(html, /class="task-card glass-panel p-4 pb-6 sm:p-6 sm:pb-8/)
+    assert.match(html, /class="dialog-panel glass-panel p-4 sm:p-8/)
+    assert.match(html, /class="glass-panel toast-panel px-4 sm:px-6 py-4 flex items-center gap-3 sm:gap-4/)
+    assert.match(read('style.css'), /\.dialog-panel\s*\{[^}]*max-height:\s*calc\(100dvh - 2rem\);[^}]*overflow-y:\s*auto;/)
+    const css = read('vendor/tailwind.min.css')
+    for (const selector of [
+        '.min-w-0', '.max-w-full', '.shrink-0', '.flex-wrap',
+        '.sm\\:w-auto', '.sm\\:w-64', '.sm\\:w-80',
+        '.sm\\:p-6', '.sm\\:p-8', '.sm\\:pb-8', '.sm\\:px-6', '.sm\\:gap-4',
+    ]) assert.ok(css.includes(selector), selector)
+})
