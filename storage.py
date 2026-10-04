@@ -14,16 +14,17 @@ from core.plugin import logger
 
 
 class ReminderStorageError(RuntimeError):
-    """Raised when an existing data file cannot be read safely."""
+    """Raised when persisted data cannot be read or validated safely."""
 
 
 class ReminderStorage:
     """Serialize reminder data with an asyncio lock and atomic writes."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, validator: Callable[[dict], None] | None = None):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
+        self._validator = validator
 
     def _unsafe_load(self) -> Dict[str, List[Dict]]:
         try:
@@ -48,10 +49,18 @@ class ReminderStorage:
         if not isinstance(data, dict):
             logger.error(f"[Reminder] 数据文件顶层必须是 JSON 对象: {self.path.name}")
             raise ReminderStorageError(f"Invalid data shape in {self.path.name}")
+        if self._validator is not None:
+            try:
+                self._validator(data)
+            except ReminderStorageError as e:
+                logger.error(f"[Reminder] 数据结构校验失败 {self.path.name}: {e}")
+                raise
         return data
 
     def _unsafe_save(self, data: Dict[str, List[Dict]]):
         try:
+            if self._validator is not None:
+                self._validator(data)
             content = json.dumps(data, ensure_ascii=False, indent=2)
             fd, tmp_path = tempfile.mkstemp(
                 dir=str(self.path.parent), suffix=".tmp"

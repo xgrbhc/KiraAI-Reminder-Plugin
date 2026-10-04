@@ -124,19 +124,20 @@ def test_corrupt_reminders_stop_initialization_before_scheduler_starts(
     asyncio.run(run())
 
 
-def test_failed_autonomy_load_shuts_down_started_scheduler(
+def test_failed_autonomy_load_skips_autonomy_without_stopping_the_plugin(
     reminder_main, tmp_path: Path, monkeypatch
 ):
     class FakeScheduler:
         def __init__(self):
             self.running = False
             self.shutdown_called = False
+            self.jobs = []
 
         def start(self):
             self.running = True
 
-        def add_job(self, *_args, **_kwargs):
-            return None
+        def add_job(self, *_args, **kwargs):
+            self.jobs.append(kwargs)
 
         def shutdown(self, wait=False):
             self.shutdown_called = True
@@ -168,11 +169,20 @@ def test_failed_autonomy_load_shuts_down_started_scheduler(
             random_check_end_hour=23,
         )
 
-        with pytest.raises(storage_error_type(reminder_main)):
+        try:
             await plugin.initialize()
+            assert scheduler.running
+            assert not scheduler.shutdown_called
+            assert scheduler.jobs == []
+            assert plugin._health_task is not None
+            assert bad_state.read_bytes() == b"{broken"
+        finally:
+            health_task = plugin._health_task
+            await plugin.terminate()
+            if health_task is not None:
+                await asyncio.gather(health_task, return_exceptions=True)
         assert scheduler.shutdown_called
         assert not scheduler.running
         assert plugin._health_task is None
-        assert bad_state.read_bytes() == b"{broken"
 
     asyncio.run(run())

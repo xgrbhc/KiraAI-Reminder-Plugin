@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import datetime as dt
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ from types import SimpleNamespace
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+import pytest
 
 from conftest import attach_delivery
 
@@ -29,7 +31,9 @@ class FakeScheduler:
 def make_autonomy_plugin(reminder_main, tmp_path: Path):
     plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
     plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
-    plugin._autonomy_storage = reminder_main.ReminderStorage(tmp_path / "autonomous_state.json")
+    plugin._autonomy_storage = reminder_main.ReminderStorage(
+        tmp_path / "autonomous_state.json", validator=reminder_main.validate_autonomy_state,
+    )
     attach_delivery(plugin, reminder_main, tmp_path)
     plugin._scheduler = FakeScheduler()
     plugin.config = SimpleNamespace(
@@ -48,7 +52,7 @@ def make_autonomy_plugin(reminder_main, tmp_path: Path):
     return plugin
 
 
-def test_state_defaults_and_legacy_list_normalization(reminder_main):
+def test_state_defaults_and_malformed_lists_are_not_normalized(reminder_main):
     state = {}
     session = reminder_main.ReminderPlugin._ensure_autonomy_session(state, "qq:dm:10001")
     assert state == {"sessions": {"qq:dm:10001": session}}
@@ -63,9 +67,10 @@ def test_state_defaults_and_legacy_list_normalization(reminder_main):
     }
     session["intents"] = "legacy-invalid"
     session["random_check_times"] = None
-    assert reminder_main.ReminderPlugin._ensure_autonomy_session(state, "qq:dm:10001") is session
-    assert session["intents"] == []
-    assert session["random_check_times"] == []
+    original = copy.deepcopy(state)
+    with pytest.raises(reminder_main.ReminderStorageError):
+        reminder_main.ReminderPlugin._ensure_autonomy_session(state, "qq:dm:10001")
+    assert state == original
 
 
 def test_autonomous_marker_and_optional_time(reminder_main):

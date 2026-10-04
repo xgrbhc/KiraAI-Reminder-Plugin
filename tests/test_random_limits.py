@@ -83,13 +83,13 @@ def test_generator_itself_rejects_invalid_counts_even_for_empty_windows(count, m
         time_utils.generate_multiple_random_times(start, start, count)
 
 
-def test_generator_keeps_short_window_capacity_and_valid_zero_window_contract():
+def test_generator_keeps_short_window_capacity_and_rejects_empty_window():
     start = dt.datetime(2099, 1, 1)
     times = time_utils.generate_multiple_random_times(start, start + dt.timedelta(minutes=2), 100)
     assert len(times) == 2
     assert times == sorted(times)
     assert all(start <= value < start + dt.timedelta(minutes=2) for value in times)
-    assert time_utils.generate_multiple_random_times(start, start, 2) == [start, start]
+    assert time_utils.generate_multiple_random_times(start, start, 2) == []
 
 
 @pytest.mark.parametrize("params", INVALID_PARAMS)

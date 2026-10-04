@@ -11,7 +11,7 @@ import random
 import secrets
 import time
 from pathlib import Path
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Awaitable, Callable
 from urllib.parse import unquote
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -65,8 +65,9 @@ from .autonomy import (
     parse_optional_time,
     random_check_window,
     random_job_id,
+    validate_autonomy_state,
 )
-from .storage import ReminderStorage
+from .storage import ReminderStorage, ReminderStorageError
 from .migration import migrate_identity_stores, pin_legacy_acl_adapter
 from .message_sources import MessageSources, requires_source_selection, CONFIRMATION_REQUIRED
 from .confirmation_routes import ConfirmationRoutes
@@ -92,7 +93,9 @@ class ReminderPlugin(BasePlugin):
         self._default_usage_prompt = self._load_default_usage_prompt()
         data_dir = get_data_path() / "plugin_data" / "reminder_plugin"
         self._storage = ReminderStorage(data_dir / "reminders.json")
-        self._autonomy_storage = ReminderStorage(data_dir / "autonomous_state.json")
+        self._autonomy_storage = ReminderStorage(
+            data_dir / "autonomous_state.json", validator=validate_autonomy_state,
+        )
         self._delivery_storage = ReminderStorage(data_dir / "delivery_state.json")
         self._delivery = DeliveryTracker(self._delivery_storage, self._storage)
         self._failed_provider_deliveries: set[str] = set()
@@ -505,7 +508,20 @@ class ReminderPlugin(BasePlugin):
         await self._autonomy_coordinator().random_check_job(sid, scheduled_time)
 
     async def _mark_autonomous_followup_fired(self, sid: str, reminder: Dict[str, Any]):
-        await self._autonomy_coordinator().mark_followup_fired(sid, reminder)
+        try:
+            await self._autonomy_coordinator().mark_followup_fired(sid, reminder)
+        except ReminderStorageError as error:
+            logger.error(f"[Reminder][Autonomous] 跟进状态同步失败，原自主状态文件已保留: {error}")
+
+    async def _run_autonomy_tool(
+        self, operation: Callable[..., Awaitable[str]], *args: Any,
+    ) -> str:
+        """Report state corruption at the tool boundary without clearing its file."""
+        try:
+            return await operation(*args)
+        except ReminderStorageError as error:
+            logger.error(f"[Reminder][Autonomous] 自主意图操作失败: {error}")
+            return f"❌ 自主状态数据不可用，原文件已保留: {error}"
 
     async def _remove_autonomous_reminders(
         self,
@@ -1375,7 +1391,9 @@ class ReminderPlugin(BasePlugin):
         allowed, reason, sid = self._check_autonomy_tool_access(event, operation="read")
         if not allowed:
             return reason
-        return await self._autonomy_coordinator().list_intents(sid, include_closed)
+        return await self._run_autonomy_tool(
+            self._autonomy_coordinator().list_intents, sid, include_closed,
+        )
     @register_tool(
         name="create_autonomous_intent",
         description="为当前会话创建一个自主意图。只保存最小状态，不会自动设置提醒；如需后续检查，继续调用 schedule_intent_followup。",
@@ -1400,7 +1418,9 @@ class ReminderPlugin(BasePlugin):
         allowed, reason, sid = self._check_autonomy_tool_access(event)
         if not allowed:
             return reason
-        return await self._autonomy_coordinator().create_intent(sid, title, notes, priority)
+        return await self._run_autonomy_tool(
+            self._autonomy_coordinator().create_intent, sid, title, notes, priority,
+        )
     @register_tool(
         name="update_autonomous_intent",
         description="更新当前会话的自主意图最小状态。不会自动改 reminder；需要改后续检查时间时调用 schedule_intent_followup。",
@@ -1429,8 +1449,9 @@ class ReminderPlugin(BasePlugin):
         allowed, reason, sid = self._check_autonomy_tool_access(event)
         if not allowed:
             return reason
-        return await self._autonomy_coordinator().update_intent(
-            sid, intent_id, title, notes, status, priority
+        return await self._run_autonomy_tool(
+            self._autonomy_coordinator().update_intent,
+            sid, intent_id, title, notes, status, priority,
         )
     @register_tool(
         name="close_autonomous_intent",
@@ -1454,8 +1475,8 @@ class ReminderPlugin(BasePlugin):
         allowed, reason, sid = self._check_autonomy_tool_access(event)
         if not allowed:
             return reason
-        return await self._autonomy_coordinator().close_intent(
-            sid, intent_id, cancel_followup
+        return await self._run_autonomy_tool(
+            self._autonomy_coordinator().close_intent, sid, intent_id, cancel_followup,
         )
     @register_tool(
         name="schedule_intent_followup",
@@ -1486,8 +1507,9 @@ class ReminderPlugin(BasePlugin):
         allowed, reason, sid = self._check_autonomy_tool_access(event)
         if not allowed:
             return reason
-        return await self._autonomy_coordinator().schedule_intent_followup(
-            sid, self._get_principal(event), intent_id, time, content, replace_existing
+        return await self._run_autonomy_tool(
+            self._autonomy_coordinator().schedule_intent_followup,
+            sid, self._get_principal(event), intent_id, time, content, replace_existing,
         )
     @register_tool(
         name="delete_reminder",

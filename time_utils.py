@@ -22,21 +22,25 @@ def generate_multiple_random_times(
     start_time: datetime.datetime, end_time: datetime.datetime, count: int
 ) -> List[datetime.datetime]:
     _validate_random_count(count, "random_count")
-    time_diff = int((end_time - start_time).total_seconds())
-    if time_diff <= 0:
-        return [start_time] * count
-    min_interval = 60
-    max_possible = time_diff // min_interval
-    actual = min(count, max(1, max_possible))
+    first_minute = start_time.replace(second=0, microsecond=0)
+    if first_minute < start_time:
+        first_minute += datetime.timedelta(minutes=1)
+    end_minute = end_time.replace(second=0, microsecond=0)
+    if end_minute < end_time:
+        end_minute += datetime.timedelta(minutes=1)
+    total_minutes = int((end_minute - first_minute).total_seconds() // 60)
+    if end_time <= start_time or total_minutes <= 0:
+        return []
+    actual = min(count, total_minutes)
     if actual < count:
         logger.warning(f"[Reminder] 时间范围不足以容纳 {count} 个提醒，已调整为 {actual} 个")
-    seg = time_diff // actual
     times = []
     for i in range(actual):
-        seg_start = start_time + datetime.timedelta(seconds=i * seg)
-        offset = random.randint(0, max(seg - 1, 0))  # Preserve zero-length segment handling.
-        times.append(seg_start + datetime.timedelta(seconds=offset))
-    times.sort()
+        # Disjoint minute segments preserve spread without truncation collisions.
+        segment_start = i * total_minutes // actual
+        segment_end = (i + 1) * total_minutes // actual - 1
+        offset = random.randint(segment_start, segment_end)
+        times.append(first_minute + datetime.timedelta(minutes=offset))
     return times
 
 

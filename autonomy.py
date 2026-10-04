@@ -32,7 +32,7 @@ from .identity import (
     adapter_from_session_id, build_bot_principal_id,
 )
 from .job_sync import reminder_job_commit
-from .storage import ReminderStorage
+from .storage import ReminderStorage, ReminderStorageError
 from .time_utils import get_local_now, parse_time_string
 
 
@@ -40,9 +40,27 @@ def now_str() -> str:
     return get_local_now().strftime("%Y-%m-%d %H:%M")
 
 
+def validate_autonomy_state(state: dict[str, Any]) -> None:
+    """Reject malformed containers without interpreting them as legacy defaults."""
+    if not isinstance(state, dict):
+        raise ReminderStorageError("autonomous_state.json 必须是 JSON 对象")
+    sessions = state.get("sessions", {})
+    if not isinstance(sessions, dict):
+        raise ReminderStorageError("autonomous_state.json 的 sessions 必须是对象")
+    for session_state in sessions.values():
+        if not isinstance(session_state, dict):
+            raise ReminderStorageError("autonomous_state.json 的会话状态必须是对象")
+        intents = session_state.get("intents", [])
+        if not isinstance(intents, list) or any(not isinstance(intent, dict) for intent in intents):
+            raise ReminderStorageError("autonomous_state.json 的 intents 必须是对象列表")
+        times = session_state.get("random_check_times", [])
+        if not isinstance(times, list) or any(not isinstance(value, str) for value in times):
+            raise ReminderStorageError("autonomous_state.json 的 random_check_times 必须是字符串列表")
+
+
 def ensure_autonomy_root(state: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(state.get("sessions"), dict):
-        state["sessions"] = {}
+    validate_autonomy_state(state)
+    state.setdefault("sessions", {})
     return state
 
 
@@ -57,10 +75,6 @@ def ensure_autonomy_session(state: dict[str, Any], sid: str) -> dict[str, Any]:
     session_state.setdefault("random_check_window", "")
     session_state.setdefault("random_check_times", [])
     session_state.setdefault("intents", [])
-    if not isinstance(session_state["random_check_times"], list):
-        session_state["random_check_times"] = []
-    if not isinstance(session_state["intents"], list):
-        session_state["intents"] = []
     return session_state
 
 
@@ -174,8 +188,6 @@ class AutonomyCoordinator:
 
     async def load_state(self) -> dict[str, Any]:
         state = await self._autonomy_storage.load()
-        if not isinstance(state, dict):
-            state = {}
         return ensure_autonomy_root(state)
 
     async def start_jobs(self) -> None:
@@ -186,6 +198,12 @@ class AutonomyCoordinator:
         allowed_sessions = self.allowed_sessions()
         if not allowed_sessions:
             logger.info("[Reminder][Autonomous] 未配置 allowed_sessions，跳过自主循环调度")
+            return
+
+        try:
+            await self.load_state()
+        except ReminderStorageError as error:
+            logger.error(f"[Reminder][Autonomous] 自主状态不可用，已跳过自主循环调度: {error}")
             return
 
         if self.config.daily_reflection_enabled:

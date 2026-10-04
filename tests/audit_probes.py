@@ -3,7 +3,7 @@
 Run with: python -m pytest tests/audit_probes.py -q -s
 Some probes assert an observed defect to make its reproduction deterministic.
 Passing here means the observation was reproduced, not that the defect is fixed.
-R1/R2/R3/R4 probes now assert corrected behavior; remaining observations retain their meaning.
+R1-R6 probes now assert corrected behavior; remaining observations retain their meaning.
 This filename is excluded from pytest's normal test_* discovery.
 All state is temporary; scheduler and publish callbacks are in-memory fakes.
 """
@@ -113,19 +113,19 @@ def test_invalid_update_preserves_the_original_intent(reminder_main, tmp_path):
     asyncio.run(run())
 
 
-def test_observed_random_schedule_rounds_two_points_to_the_same_minute(reminder_main, tmp_path, monkeypatch):
+def test_random_schedule_preserves_distinct_minute_slots(reminder_main, tmp_path, monkeypatch):
     async def run():
         plugin, _, scheduled = make_plugin(reminder_main, tmp_path / "reminders.json")
         time_utils = sys.modules[reminder_main.generate_multiple_random_times.__module__]
-        offsets = iter([89, 0])
-        monkeypatch.setattr(time_utils.random, "randint", lambda low, high: next(offsets))
+        monkeypatch.setattr(time_utils.random, "randint", lambda low, high: high)
         result = await plugin.set_reminder(
             SimpleNamespace(), "audit random", "2099-01-01 10:00",
             time_range_end="2099-01-01 10:03", random_count=2,
         )
         records = (await plugin._storage.load())[SID]
         assert result.startswith("已添加随机待办") and len(records) == len(scheduled) == 2
-        assert records[0]["time"] == records[1]["time"] == "2099-01-01 10:01"
+        assert len({record["time"] for record in records}) == 2
+        assert all("2099-01-01 10:00" <= record["time"] < "2099-01-01 10:03" for record in records)
         assert records[0]["job_id"] != records[1]["job_id"]
         observation("random_minute_collision", stored_times=[item["time"] for item in records])
 
@@ -166,13 +166,15 @@ def test_atomic_replace_failure_keeps_old_file_and_cleans_temporary_file(reminde
     asyncio.run(run())
 
 
-def test_observed_nested_invalid_autonomy_data_is_replaced_on_write(reminder_main, tmp_path):
+def test_nested_invalid_autonomy_data_is_preserved_on_write(reminder_main, tmp_path):
     async def run():
         plugin = make_autonomy_plugin(reminder_main, tmp_path)
-        await plugin._autonomy_storage.save({"sessions": {SID: {"intents": "invalid nested shape"}}})
-        result = await plugin._autonomy_coordinator().create_intent(SID, "new")
-        after = await plugin._autonomy_storage.load()
-        assert result.startswith("已创建") and isinstance(after["sessions"][SID]["intents"], list)
-        observation("nested_shape_overwrite", original_shape_rejected=False, original_value_replaced=True)
+        path = plugin._autonomy_storage.path
+        path.write_text(json.dumps({"sessions": {SID: {"intents": "invalid nested shape"}}}), encoding="utf-8")
+        original = path.read_bytes()
+        with pytest.raises(reminder_main.ReminderStorageError):
+            await plugin._autonomy_coordinator().create_intent(SID, "new")
+        assert path.read_bytes() == original
+        observation("nested_shape_overwrite", original_shape_rejected=True, original_value_replaced=False)
 
     asyncio.run(run())

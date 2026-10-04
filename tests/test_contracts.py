@@ -164,7 +164,7 @@ def test_time_helper_contract(reminder_main):
     start = reminder_main.parse_time_string("2026-09-30 10:15")
     assert start == dt.datetime(2026, 9, 30, 10, 15)
     assert reminder_main.determine_random_count(random_count=2) == 2
-    assert reminder_main.generate_multiple_random_times(start, start, 2) == [start, start]
+    assert reminder_main.generate_multiple_random_times(start, start, 2) == []
 
 
 def test_legacy_json_round_trip_in_temp_directory(reminder_main, tmp_path: Path):
