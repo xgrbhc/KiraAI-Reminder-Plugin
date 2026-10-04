@@ -1,11 +1,51 @@
 """Recoverable, startup-only migrations of plugin-owned files."""
 
 from pathlib import Path
+import json
+import os
 import shutil
 from typing import Any
 
 from .identity import IDENTITY_SCHEMA_VERSION, migrate_reminder_identity
-from .storage import ReminderStorage
+from .storage import ReminderStorage, ReminderStorageError, write_json_atomic
+
+
+def _config_bytes(path: Path) -> bytes:
+    """Read an existing config snapshot without treating unreadable data as empty."""
+    content = path.read_bytes()
+    if not isinstance(json.loads(content.decode("utf-8")), dict):
+        raise ReminderStorageError(f"Invalid config shape in {path.name}")
+    return content
+
+
+def _backup_config_once(path: Path, content: bytes) -> None:
+    """Preserve the first readable snapshot and clean up a failed owned write."""
+    backup = path.with_name(f"{path.stem}.pre-advanced-config.backup.json")
+    try:
+        backup_file = backup.open("xb")
+    except FileExistsError:
+        _config_bytes(backup)
+        return
+    try:
+        with backup_file:
+            backup_file.write(content)
+            backup_file.flush()
+            os.fsync(backup_file.fileno())
+    except Exception:
+        backup.unlink(missing_ok=True)
+        raise
+
+
+def persist_advanced_config(path: Path, config: dict[str, Any]) -> None:
+    """Back up a valid old config before the startup-only atomic replacement."""
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        _backup_config_once(path, _config_bytes(path))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(path, config, indent=4)
 
 
 def backup_once(path: Path, suffix: str) -> None:

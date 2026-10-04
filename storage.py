@@ -17,6 +17,25 @@ class ReminderStorageError(RuntimeError):
     """Raised when persisted data cannot be read or validated safely."""
 
 
+def write_json_atomic(path: Path, data: dict, *, indent: int = 2) -> None:
+    """Replace JSON after a complete write; callers own validation and locking."""
+    content = json.dumps(data, ensure_ascii=False, indent=indent)
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        temp_file = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
+        fd = None
+        with temp_file:
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 class ReminderStorage:
     """Serialize reminder data with an asyncio lock and atomic writes."""
 
@@ -61,20 +80,7 @@ class ReminderStorage:
         try:
             if self._validator is not None:
                 self._validator(data)
-            content = json.dumps(data, ensure_ascii=False, indent=2)
-            fd, tmp_path = tempfile.mkstemp(
-                dir=str(self.path.parent), suffix=".tmp"
-            )
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as temp_file:
-                    temp_file.write(content)
-                    temp_file.flush()
-                    os.fsync(temp_file.fileno())
-                os.replace(tmp_path, self.path)
-            except Exception:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-                raise
+            write_json_atomic(self.path, data)
         except Exception as e:
             logger.error(f"[Reminder] 保存数据失败: {e}")
             raise

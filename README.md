@@ -106,6 +106,8 @@ KiraAI/
 
 自主状态缺少旧字段时仍使用默认值，但已存在的会话、意图列表或随机时间列表结构损坏时，会保留原文件并报错，不自动清空。启动时仅跳过自主循环调度，普通提醒仍可运行；修正文件后重载恢复。适用范围及测试记录见 [随机时间与自主数据修复方案](docs/RANDOM_AND_AUTONOMY_DATA_PLAN.md)。
 
+插件自身的旧高级配置迁移会先校验原配置，在 `data/config/plugins/` 保留首次 `reminder_plugin.pre-advanced-config.backup.json`，再用原子替换落盘；不可读或损坏时不覆盖，保存失败保留原文件并警告。已有自定义提示词、字段优先级不改；无迁移不生成备份。此保护不覆盖主项目默认项填充及 WebUI 保存路径，详见 [配置迁移保护方案](docs/CONFIG_MIGRATION_SAFETY_PLAN.md)。
+
 未确认投递摘要只在本轮最新用户输入末尾提供，不进入静态系统提示词或保存的用户消息历史；最多 5 条，内容使用有界 JSON 数据表示。正常 Tool 结果仍会进入会话历史，不承诺零 Token 成本或固定缓存命中率。实施及验证边界见 [缓存与提示词检查](docs/CACHE_PROMPT_REVIEW.md)。
 
 升级到 v2.2.0 时，旧提醒会幂等迁移到 identity schema v2。首次迁移前会在插件数据目录生成 `reminders.pre-v2.2.backup.json`；无法恢复所有者的群聊旧记录仅管理员可见和管理。

@@ -68,7 +68,7 @@ from .autonomy import (
     validate_autonomy_state,
 )
 from .storage import ReminderStorage, ReminderStorageError
-from .migration import migrate_identity_stores, pin_legacy_acl_adapter
+from .migration import migrate_identity_stores, pin_legacy_acl_adapter, persist_advanced_config
 from .message_sources import MessageSources, requires_source_selection, CONFIRMATION_REQUIRED
 from .confirmation_routes import ConfirmationRoutes
 from .delivery import DeliveryTracker
@@ -133,11 +133,7 @@ class ReminderPlugin(BasePlugin):
         if changed:
             try:
                 config_path = get_data_path() / "config" / "plugins" / "reminder_plugin.json"
-                config_path.parent.mkdir(parents=True, exist_ok=True)
-                config_path.write_text(
-                    json.dumps(migrated, ensure_ascii=False, indent=4),
-                    encoding="utf-8",
-                )
+                persist_advanced_config(config_path, migrated)
             except Exception as e:
                 logger.warning(f"[Reminder] Failed to migrate advanced config: {e}")
         return migrated
