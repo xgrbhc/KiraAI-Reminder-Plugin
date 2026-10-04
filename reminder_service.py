@@ -128,7 +128,10 @@ class ReminderService:
                     return "❌ 结束时间格式错误"
                 if end_time <= start_time:
                     return "❌ 结束时间必须晚于开始时间"
-                final_count = determine_random_count(random_count, random_count_min, random_count_max)
+                try:
+                    final_count = determine_random_count(random_count, random_count_min, random_count_max)
+                except ValueError as error:
+                    return f"❌ {error}"
                 trigger_times = generate_multiple_random_times(start_time, end_time, final_count)
                 trigger_times = [t for t in trigger_times if t > get_local_now()]
                 if not trigger_times:

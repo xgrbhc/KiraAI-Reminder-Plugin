@@ -6,6 +6,7 @@ from .confirmation import PendingRequests, CheckedReminderStorage, reminder_targ
 from .identity import PrincipalKind, event_messages
 from .message_sources import CONFIRMATION_REQUIRED, requires_source_selection, inspect_user_message
 from .permissions import ReminderOperation
+from .time_utils import validate_random_count_params
 
 OPERATIONS = {
     "edit_reminder": ReminderOperation.EDIT,
@@ -76,6 +77,11 @@ class ConfirmationRoutes:
                                         plugin._check_action_permission(event, params.get("action"))):
                     if not allowed:
                         return reason
+                if params.get("time_range_end"):
+                    validate_random_count_params(
+                        params.get("random_count"), params.get("random_count_min"),
+                        params.get("random_count_max"),
+                    )
             elif operation == "review_delivery_issue":
                 ledger = await plugin._delivery_storage.load()
                 entry = next((item for item in ledger.get(sid, [])
