@@ -1,0 +1,138 @@
+{
+  "packages": {
+    "@fontsource/outfit": "5.3.0",
+    "@fortawesome/fontawesome-free": "6.4.0",
+    "tailwindcss": "3.4.17",
+    "vue": "3.5.43"
+  },
+  "files": {
+    "fontawesome/css/icons.min.css": {
+      "bytes": 81977,
+      "sha256": "ca9ac81eacd6a5705c3c32ad72353d8867f45469c53c21d40e4b265c36ada12c"
+    },
+    "fontawesome/webfonts/fa-regular-400.ttf": {
+      "bytes": 63952,
+      "sha256": "528d022dce6725f8a0811fd91d8e6513445c81ef33353a5c3234eab932551abf"
+    },
+    "fontawesome/webfonts/fa-regular-400.woff2": {
+      "bytes": 24948,
+      "sha256": "8e7e5ea1b15f62ab14dbd41768e8fbcd21cc859a4ea5da812457ee714299fb35"
+    },
+    "fontawesome/webfonts/fa-solid-900.ttf": {
+      "bytes": 394628,
+      "sha256": "67a65763c7f80903d81603bbeb9049fc2bf28508479b83ed011fe24c71fa950a"
+    },
+    "fontawesome/webfonts/fa-solid-900.woff2": {
+      "bytes": 150124,
+      "sha256": "7152a6933ee3d690ec2af3d09da9d701723d16aa3410a6d80f28ff8866f3b880"
+    },
+    "licenses/fontawesome-free.txt": {
+      "bytes": 7427,
+      "sha256": "0aa8f86525273b2efa4f40f4272a188e187704252170e979dc06879adf68d43c"
+    },
+    "licenses/outfit.txt": {
+      "bytes": 4387,
+      "sha256": "0e5fcef5d93bfcae273c11c00f0bb453d3b5491860e1ac8b658767b7577c938f"
+    },
+    "licenses/tailwindcss.txt": {
+      "bytes": 1071,
+      "sha256": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985"
+    },
+    "licenses/vue.txt": {
+      "bytes": 1091,
+      "sha256": "1bb85cc9b13b81ef41c81c51866172fc345e0503c86726a6755b796590b70175"
+    },
+    "outfit/files/outfit-latin-300-normal.woff": {
+      "bytes": 18196,
+      "sha256": "bcc41559359a3cb79105f71979b7e70f9bba8ee39460db790057d3f3c0cc77eb"
+    },
+    "outfit/files/outfit-latin-300-normal.woff2": {
+      "bytes": 13956,
+      "sha256": "ef88e74f63ce75b54cce4d5a4087c6f180750b9ebae6ab6e5bf2a9939bf6958f"
+    },
+    "outfit/files/outfit-latin-400-normal.woff": {
+      "bytes": 18232,
+      "sha256": "f329dc36d2d9285431fb8322f5e951def9cac4a42c1cada679747f7c64b04916"
+    },
+    "outfit/files/outfit-latin-400-normal.woff2": {
+      "bytes": 14032,
+      "sha256": "71f028fd2349990b3f8aa643abe767e82e0f596be407ae66f0004ff164121bdb"
+    },
+    "outfit/files/outfit-latin-500-normal.woff": {
+      "bytes": 17688,
+      "sha256": "40083be5d9c1935c562bfe9be662d5a2798910deee9e8049509142549a995626"
+    },
+    "outfit/files/outfit-latin-500-normal.woff2": {
+      "bytes": 13528,
+      "sha256": "fc9bff941def6d924a71632bd8a93190528872eae6414844f3c367ff948d92fd"
+    },
+    "outfit/files/outfit-latin-600-normal.woff": {
+      "bytes": 18412,
+      "sha256": "3d1cd1b42cb525acde934764b2adec41dddf7932e1a965392d285efd56f2c148"
+    },
+    "outfit/files/outfit-latin-600-normal.woff2": {
+      "bytes": 14140,
+      "sha256": "8cfe15c2c6de6ef8efff3eedbd52a383ac9ef23d6c23f6cd9f9b838f5f37dc36"
+    },
+    "outfit/files/outfit-latin-700-normal.woff": {
+      "bytes": 18344,
+      "sha256": "fb730df77799be655b0028de3ff2952a6ebcd3ca85d32cbf188c6f3ea66f82b7"
+    },
+    "outfit/files/outfit-latin-700-normal.woff2": {
+      "bytes": 14060,
+      "sha256": "5d5e3734089a74707292ce8a3e186def34cd63e33879f9ac3689a8d8da9d0706"
+    },
+    "outfit/files/outfit-latin-ext-300-normal.woff": {
+      "bytes": 8548,
+      "sha256": "5c78f172cf303e7df8fba666f3cc1d7003de656e6822b0f99bfc733e4a9aff38"
+    },
+    "outfit/files/outfit-latin-ext-300-normal.woff2": {
+      "bytes": 6384,
+      "sha256": "463eec2e5944ce6534089376531a533eae99b6dfae1af87924756fa5af6ba1c0"
+    },
+    "outfit/files/outfit-latin-ext-400-normal.woff": {
+      "bytes": 8640,
+      "sha256": "a6697dab76ab8386fc4244f9f6d3ed8639fce59e3be228c146d6c4586c835022"
+    },
+    "outfit/files/outfit-latin-ext-400-normal.woff2": {
+      "bytes": 6380,
+      "sha256": "e279fd5005b5936e4f4d20fd21e1fdd6a35d724ff576623d31e7c425c356b7ac"
+    },
+    "outfit/files/outfit-latin-ext-500-normal.woff": {
+      "bytes": 8492,
+      "sha256": "0bee549f28f292ac938f04ff97b235dc9fa0b42fbbd8b53a279355da59443cd2"
+    },
+    "outfit/files/outfit-latin-ext-500-normal.woff2": {
+      "bytes": 6244,
+      "sha256": "89894a600bea0ec4724988d191ea32a0353bb1c9c130cbdf346654d356b1ba84"
+    },
+    "outfit/files/outfit-latin-ext-600-normal.woff": {
+      "bytes": 8752,
+      "sha256": "a0c20185e588d3dd8f6d5557c3499a0e3c95f463a555ebe1bf7e233263972749"
+    },
+    "outfit/files/outfit-latin-ext-600-normal.woff2": {
+      "bytes": 6528,
+      "sha256": "a049363d2c3565ef5ea79725c71d23030c91f679cc7a0cf45e9726375bd58e7c"
+    },
+    "outfit/files/outfit-latin-ext-700-normal.woff": {
+      "bytes": 8784,
+      "sha256": "8c2539e9840ed06109ace086bda20c9985d69c2ff70f931c9a66cf459f3a617b"
+    },
+    "outfit/files/outfit-latin-ext-700-normal.woff2": {
+      "bytes": 6484,
+      "sha256": "545d41d83230a139623b3ec2889b338bb3c5a19a8aefe9c23b203dbe72b2bbe4"
+    },
+    "outfit/outfit.css": {
+      "bytes": 4494,
+      "sha256": "d5bd0397afac8df86b1f2875ca1817578952df71507d671b9434c6ee55e0c6c7"
+    },
+    "tailwind.min.css": {
+      "bytes": 20736,
+      "sha256": "db9aabc2c856c85f35f47afc4275bb751a2a2aaf78dd3b1f84b65a2f6ec3ee1f"
+    },
+    "vue.global.prod.js": {
+      "bytes": 168331,
+      "sha256": "b72394052eef1eeda1752db3758ce1be6f88016903f22e5241cc732ea307478e"
+    }
+  }
+}

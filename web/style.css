@@ -31,7 +31,10 @@ body {
     transform: translateY(-4px) translateZ(0); /* Promote smooth compositing without scaling the bitmap. */
     background: rgba(255, 255, 255, 0.08);
     box-shadow: 0 6px 12px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.4) inset; /* Keep the shadow compact. */
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    /* Preserve the left-edge status marker and its width while hovering. */
+    border-top-color: rgba(255, 255, 255, 0.3);
+    border-right-color: rgba(255, 255, 255, 0.3);
+    border-bottom-color: rgba(255, 255, 255, 0.3);
 }
 /* Gradient Text */
 .text-gradient {

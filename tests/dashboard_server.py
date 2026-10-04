@@ -7,8 +7,10 @@ This server binds only loopback and never calls KiraAI or an LLM.
 import argparse
 from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import mimetypes
 from pathlib import Path
-from urllib.parse import urlsplit
+import re
+from urllib.parse import unquote, urlsplit
 
 
 WEB = Path(__file__).resolve().parents[1] / "web"
@@ -99,22 +101,39 @@ class Handler(BaseHTTPRequestHandler):
                                     f'src="/dashboard/index.html?{escape(query, quote=True)}"')
         elif route == "/dashboard/test-bridge.js":
             body, content_type = BRIDGE, "text/javascript"
-        elif route in {f"/dashboard/{name}" for name in ("index.html", "app.js", "i18n.js", "style.css")}:
-            name = route.rsplit("/", 1)[1]
-            body = (WEB / name).read_text(encoding="utf-8")
-            content_type = "text/css" if name.endswith(".css") else "text/javascript"
+        elif route == "/style-probe":
+            # Reuse the production stylesheet order instead of maintaining a copy.
+            links = re.findall(r'<link rel="stylesheet" href="[^"]+">', (WEB / "index.html").read_text(encoding="utf-8"))
+            body = (Path(__file__).parent / "style_probe.html").read_text(encoding="utf-8")
+            body = body.replace("<!-- DASHBOARD_STYLES -->", "\n".join(links))
+            content_type = "text/html"
+        elif route.startswith("/dashboard/"):
+            name = unquote(route.removeprefix("/dashboard/"))
+            target = (WEB / name).resolve()
+            core_file = name in {"index.html", "app.js", "i18n.js", "style.css"}
+            vendor_file = (
+                target.is_relative_to((WEB / "vendor").resolve())
+                and target.suffix in {".js", ".css", ".woff", ".woff2", ".ttf"}
+            )
+            if not target.is_file() or not target.is_relative_to(WEB.resolve()) or not (core_file or vendor_file):
+                self.send_error(404)
+                return
+            body = target.read_bytes()
+            content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
             if name == "index.html":
                 content_type = "text/html"
-                body = body.replace('<script src="./i18n.js"></script>',
-                                    '<script src="./test-bridge.js"></script><script src="./i18n.js"></script>')
+                body = body.decode("utf-8").replace('<script src="./i18n.js"></script>',
+                                                  '<script src="./test-bridge.js"></script><script src="./i18n.js"></script>')
         else:
             self.send_error(404)
             return
         self.send_response(200)
-        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "no-store")
+        # Only this isolated preview blocks external resources; host policy is unchanged.
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'")
         self.end_headers()
-        self.wfile.write(body.encode("utf-8"))
+        self.wfile.write(body.encode("utf-8") if isinstance(body, str) else body)
 
     def log_message(self, *_args):
         pass

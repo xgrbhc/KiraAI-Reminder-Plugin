@@ -68,7 +68,8 @@ KiraAI/
                 │    ├── index.html
                 │    ├── app.js
                 │    ├── i18n.js
-                │    └── style.css
+                │    ├── style.css
+                │    └── vendor/       # Bundled JS, CSS, fonts and licenses
                 └── tests/
                      ├── test_contracts.py
                      ├── test_reminder_service.py
@@ -130,9 +131,13 @@ KiraAI/
 
 `web/index.html` 从同目录加载 `i18n.js`、`app.js` 和 `style.css`；`app.js` 仍使用主 WebUI 注入的 `window.PluginPageContext` 调用插件 API。页面资源不需要额外注册静态路由。
 
+Vue、Tailwind 样式、Font Awesome 图标和 Outfit 字体已固定版本并随插件放在 `web/vendor/`，浏览器不再从外部 CDN 获取这些资源。新增资源约 1.1 MiB，界面操作和认证方式保持不变；普通用户不需要 Node/npm。这仅消除插件页面资源的外网依赖，不代表 Kira 的模型服务可以离线运行。
+
 重试投递、忽略此次异常和删除提醒使用页面内确认框，兼容主 WebUI 的 iframe 沙箱。重要提醒仍须完成后端令牌确认。提交时禁用重复操作；切换会话后清空旧列表，须重新加载后才能操作。读取失败不会被当作“没有提醒”；提交结果不明时需先刷新核对，不自动重复提交。
 
 前端检查记录与剩余改进项见 [前端检查记录](docs/FRONTEND_REVIEW.md)。新增提示文案的中英文在插件内维护，不修改主项目翻译文件。
+
+前端维护须保留“通用面板样式在前、Tailwind 工具类在后”的加载顺序；修改后检查彩色侧边线、圆形按钮、悬停、阴影和键盘焦点，不能只确认资源存在。简明规则及隔离样式检查页见 [前端维护注意事项](docs/FRONTEND_MAINTENANCE.md)。
 
 同会话操作后的后台刷新会保留当前列表，避免加载占位导致页面跳到顶部；刷新期间仍暂停写操作。切换会话或读取失败时清空旧数据，确认框焦点恢复不会主动滚动页面。
 
@@ -199,9 +204,19 @@ KiraAI/
 ```bash
 python -m pytest tests/ -q
 node --test tests/test_dashboard.js
+node --test tests/test_local_assets.js
 ```
 
 前端测试使用 Node 内置测试框架，无需安装 npm 依赖。可用 `python tests/dashboard_server.py --port 0` 启动隔离浏览器测试页面；它只在本机监听，使用内存测试数据和模拟接口，不连接 Kira 或 LLM。按 Ctrl+C 停止测试服务器。
+
+仅开发者在修改 Tailwind 样式类或前端依赖时，需要 Node.js 18+，在 `web/` 目录执行：
+
+```bash
+npm ci --ignore-scripts --cache ./.npm-cache
+npm run build
+```
+
+生成的 `web/vendor/` 须与源码、`package-lock.json` 一起提交，不提交 `node_modules/` 或 npm 缓存。安装、重载和使用插件不需要执行构建；不要手改生成文件。固定版本、第三方许可和构建说明见 [本地资源说明](web/THIRD_PARTY_NOTICES.md)。
 
 隔离页面可附加 `?sid=Test%3Adm%3Aalice&list_size=30&read_delay=600`，生成长列表并模拟读取延迟，以检查后台刷新时的滚动位置；这些参数仅用于测试服务器。
 

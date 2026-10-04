@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <base href="/dashboard/">
+    <title>Reminder isolated CSS regression probe</title>
+    <!-- DASHBOARD_STYLES -->
+</head>
+<body class="p-6">
+    <main class="max-w-6xl mx-auto">
+        <h1 class="text-2xl font-semibold mb-6">Isolated CSS checks — no APIs or real reminders</h1>
+        <div class="space-y-4">
+            <div data-probe="success" class="glass-panel toast-panel px-6 py-4 flex items-center gap-4 shadow-2xl max-w-sm border-l-4 border-l-emerald-500">
+                <i class="fa-solid fa-circle-check text-emerald-500 text-2xl"></i>
+                <span>Success: green 4px left edge</span>
+                <button data-probe="close" aria-label="Close style probe" class="toast-close shrink-0 w-8 h-8 rounded-full text-gray-400 hover:text-white transition-colors"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div data-probe="error" class="glass-panel toast-panel px-6 py-4 flex items-center gap-4 shadow-2xl max-w-sm border-l-4 border-l-red-500">
+                <i class="fa-solid fa-triangle-exclamation text-red-500 text-2xl"></i>
+                <span>Error: red 4px left edge</span>
+            </div>
+            <div data-probe="important" class="task-card glass-panel p-6 border-l-4 border-l-yellow-400">Important: yellow 4px edge, including on hover</div>
+            <div data-probe="ordinary" class="task-card glass-panel p-6 border-l-4 border-l-transparent">Ordinary: transparent 4px edge, including on hover</div>
+            <section data-probe="delivery" class="glass-panel p-6 border-yellow-500/30">Delivery panel: yellow border</section>
+            <div data-probe="dialog" class="dialog-panel glass-panel p-8 max-w-md w-full shadow-2xl border-yellow-500/30">Dialog: yellow border and utility shadow</div>
+            <button data-probe="action" aria-label="Circular action style probe" class="w-12 h-12 rounded-full glass-panel hover:bg-yellow-500/20 hover:text-yellow-400 flex justify-center items-center transition-all hover:scale-110"><i class="fa-solid fa-pause"></i></button>
+            <button data-probe="scan" class="glass-panel px-6 py-3 shadow-lg">Scan: utility shadow</button>
+        </div>
+    </main>
+</body>
+</html>

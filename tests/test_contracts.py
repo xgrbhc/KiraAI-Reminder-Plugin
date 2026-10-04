@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import re
 import sys
 from urllib.parse import urljoin
 from pathlib import Path
@@ -74,6 +75,21 @@ def test_dashboard_assets_resolve_from_folder_page():
         assert "javascript" in script.headers["content-type"]
         assert ".glass-panel" in style.text
         assert "window.PluginPageContext.ready()" in script.text
+
+        resources = re.findall(r'(?:src|href)="([^"]+)"', page.text)
+        assert resources and all(resource.startswith("./") for resource in resources)
+        for resource in resources:
+            asset = client.get(urljoin(str(page.url), resource))
+            assert asset.status_code == 200, resource
+            assert asset.content, resource
+            if resource.endswith(".css"):
+                for font in re.findall(r'url\([\'"]?([^\)\'"\s]+)[\'"]?\)', asset.text):
+                    font_response = client.get(urljoin(str(asset.url), font))
+                    assert font_response.status_code == 200, font
+                    assert font_response.content, font
+                    # Windows MIME databases may serve fonts as binary streams.
+                    mime = font_response.headers["content-type"]
+                    assert "font" in mime or mime == "application/octet-stream", font
 
 
 def test_registered_entry_points(reminder_main):
