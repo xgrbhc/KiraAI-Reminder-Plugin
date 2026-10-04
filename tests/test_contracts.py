@@ -18,9 +18,12 @@ from core.plugin.plugin_registry import PluginComponents, _plugin_components
 
 from _loader import PLUGIN_DIR, load_plugin_module
 from conftest import attach_delivery
+from _events import batch, message, observe
 
 
 TOOL_NAMES = {
+    "list_pending_reminder_requests",
+    "confirm_reminder_request",
     "list_message_sources",
     "set_reminder",
     "list_reminders",
@@ -77,7 +80,7 @@ def test_registered_entry_points(reminder_main):
     components = _plugin_components["reminder_plugin"]
     assert set(components.tools) == TOOL_NAMES
     assert all(tool["parameters"]["type"] == "object" for tool in components.tools.values())
-    assert len(components.hooks) == 6
+    assert len(components.hooks) == 7
     assert {hook.handler.__name__ for hook in components.hooks} == {
         "inject_usage_prompt",
         "enforce_autonomy_tool_policy",
@@ -85,6 +88,7 @@ def test_registered_entry_points(reminder_main):
         "inject_delivery_issues",
         "observe_provider_failure",
         "acknowledge_delivery",
+        "observe_reminder_confirmation",
     }
     assert [(page["route"], page["auth"]) for page in components.pages] == [
         ("/dashboard", True)
@@ -110,7 +114,7 @@ def test_fresh_main_import_keeps_single_registration_set(reminder_main):
             load_plugin_module("main", package_name=package_name)
             components = _plugin_components["reminder_plugin"]
             assert set(components.tools) == TOOL_NAMES
-            assert len(components.hooks) == 6
+            assert len(components.hooks) == 7
             assert len(components.pages) == 1
             assert len(components.api_routes) == 6
     finally:
@@ -181,6 +185,9 @@ def test_delete_dispatch_from_tool_api_and_quick_command(reminder_main, tmp_path
         plugin._cleanup_tokens = lambda: None
         plugin._get_sid = lambda _event: sid
         plugin._check_permission = lambda *_args: allowed
+        plugin._get_principal = lambda _event: reminder_main.PrincipalContext(
+            reminder_main.PrincipalKind.WEB, "web-admin", trusted=True,
+        )
         expected = "已删除: test" if allowed else "❌ 权限拒绝：您无权操作该任务 (创建人: 未知)"
 
         if entry == "tool":
@@ -244,28 +251,18 @@ def test_important_delete_requires_actor_bound_confirmation(reminder_main, tmp_p
         plugin._get_sid = lambda _event: sid
         plugin._check_permission = lambda *_args: True
         plugin._is_admin_user = lambda _event: False
-        owner = reminder_main.PrincipalContext(
-            kind=reminder_main.PrincipalKind.USER,
-            principal_id="10001",
-            session_id=sid,
-        )
-        other = reminder_main.PrincipalContext(
-            kind=reminder_main.PrincipalKind.USER,
-            principal_id="20002",
-            session_id=sid,
-        )
-        plugin._get_principal = lambda event: event.principal
-        owner_event = SimpleNamespace(principal=owner)
-        other_event = SimpleNamespace(principal=other)
+        plugin._identity = reminder_main.IdentityResolver("test-secret")
+        owner_event = batch(message("10001", group=None), adapter="qq")
+        other_event = batch(message("20002", group=None), adapter="qq")
 
         response = await plugin.delete_reminder(owner_event, job_id="job-1")
-        assert response.startswith("注意: 「important task」是重要提醒\n请确认删除令牌: ")
-        token = response.rsplit(" ", 1)[-1]
-        assert await plugin.confirm_delete_reminder(other_event, token) == (
-            "❌ 权限拒绝：确认令牌不属于当前主体。"
-        )
+        assert "待确认请求" in response
+        token = json.loads(await plugin.list_pending_reminder_requests(owner_event))[0]["request_id"]
+        assert "确认未完成" in await plugin.confirm_delete_reminder(other_event, token)
+        assert "确认未完成" in await plugin.confirm_delete_reminder(owner_event, token)
         assert await plugin._storage.load() == {sid: [record]}
-        assert await plugin.confirm_delete_reminder(owner_event, token) == "已删除: important task"
+        confirmed = await observe(plugin, message("10001", "确认删除", group=None), "qq")
+        assert await plugin.confirm_delete_reminder(confirmed, token) == "已删除: important task"
         assert await plugin._storage.load() == {sid: []}
 
     asyncio.run(run())

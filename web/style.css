@@ -13,6 +13,15 @@ body {
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
     border-radius: 20px;
 }
+/* Keep fixed notifications independent of the blurred panels underneath. */
+.glass-panel.toast-panel {
+    background: #25213e;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+.toast-close {
+    background: transparent;
+}
 .task-card {
     transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     -webkit-font-smoothing: antialiased;

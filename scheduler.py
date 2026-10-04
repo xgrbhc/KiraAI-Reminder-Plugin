@@ -162,6 +162,9 @@ class ReminderScheduler:
                 if delivery_id:
                     await self._delivery.mark(sid, delivery_id, "failed", "reminder deleted or paused")
                 return
+            if delivery_id and current != reminder:
+                await self._delivery.mark(sid, delivery_id, "failed", "reminder changed after retry approval")
+                return
             reminder = current
             try:
                 if delivery_id is None:

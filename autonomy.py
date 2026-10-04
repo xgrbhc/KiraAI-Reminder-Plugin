@@ -454,6 +454,10 @@ class AutonomyCoordinator:
         removed = 0
         async with self._storage.modify() as data:
             reminders = data.get(sid, [])
+            if any(is_autonomous_reminder(reminder) and reminder.get("important")
+                   and ((intent_id and reminder.get("intent_id") == intent_id)
+                        or (job_id and reminder.get("job_id") == job_id)) for reminder in reminders):
+                raise ValueError("关联提醒已标记重要，请先确认删除或取消重要标记")
             kept = []
             for reminder in reminders:
                 matches_intent = intent_id and reminder.get("intent_id") == intent_id
@@ -555,19 +559,22 @@ class AutonomyCoordinator:
     async def close_intent(
         self, sid: str, intent_id: str, cancel_followup: bool = True
     ) -> str:
+        removed = 0
         async with self._autonomy_storage.modify() as state:
             session_state = ensure_autonomy_session(state, sid)
             intent = find_intent(session_state, intent_id)
             if not intent:
                 return f"找不到自主意图: {intent_id}"
+            if cancel_followup:
+                try:
+                    removed = await self.remove_autonomous_reminders(sid, intent_id=intent_id)
+                except ValueError as error:
+                    return f"❌ {error}"
             intent["status"] = "closed"
             intent["closed_at"] = now_str()
             intent["updated_at"] = now_str()
             intent["next_check_at"] = ""
             intent["next_check_job_id"] = ""
-        removed = 0
-        if cancel_followup:
-            removed = await self.remove_autonomous_reminders(sid, intent_id=intent_id)
         suffix = f"，已取消 {removed} 个后续检查提醒" if removed else ""
         return f"已关闭自主意图: {intent_id}{suffix}"
 
@@ -596,7 +603,10 @@ class AutonomyCoordinator:
             return "❌ 不能为已关闭意图安排跟进"
 
         if replace_existing:
-            await self.remove_autonomous_reminders(sid, intent_id=intent_id)
+            try:
+                await self.remove_autonomous_reminders(sid, intent_id=intent_id)
+            except ValueError as error:
+                return f"❌ {error}"
 
         batch_ts = get_local_now().strftime("%Y%m%d%H%M%S%f")
         job_id = f"autonomous_{sid}_{intent_id}_{batch_ts}"

@@ -6,6 +6,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from _events import batch, message, observe
 
 from _loader import load_plugin_module
 from _loader import PLUGIN_DIR
@@ -356,16 +357,19 @@ def test_important_delete_token_cannot_cross_adapter_even_for_scoped_admin(remin
         plugin = reminder_main.ReminderPlugin(SimpleNamespace(), {
             "admin_users": ["QQ:123", "Telegram:123"], "group_create_policy": "all",
         })
-        qq, telegram = tool_event("QQ"), tool_event("Telegram")
+        qq = batch(message("123", group="456"))
+        telegram = batch(message("123", group="456"), adapter="Telegram")
         await plugin.set_reminder(qq, content="important", time="2030-01-01 10:00")
         record = (await plugin._storage.load())[qq.sid][0]
         await plugin.mark_reminder_important(qq, record["job_id"])
         result = await plugin.delete_reminder(qq, job_id=record["job_id"])
-        token = result.rsplit(" ", 1)[-1]
-        assert "权限拒绝" in await plugin.confirm_delete_reminder(telegram, token)
+        token = json.loads(await plugin.list_pending_reminder_requests(qq))[0]["request_id"]
+        wrong = await observe(plugin, message("123", "确认删除", group="456"), "Telegram")
+        assert "确认未完成" in await plugin.confirm_delete_reminder(wrong, token)
         assert (await plugin._storage.load())[qq.sid]
-        assert token in plugin._pending
-        assert "已删除" in await plugin.confirm_delete_reminder(qq, token)
-        assert token not in plugin._pending
+        assert json.loads(await plugin.list_pending_reminder_requests(qq))
+        confirmed = await observe(plugin, message("123", "确认删除", group="456"))
+        assert "已删除" in await plugin.confirm_delete_reminder(confirmed, token)
+        assert not json.loads(await plugin.list_pending_reminder_requests(qq))
 
     asyncio.run(run())

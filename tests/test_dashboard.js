@@ -241,4 +241,217 @@ test('template has no unsupported inline timer and uses a sandbox-safe dialog', 
     assert(html.includes('role="dialog"'))
     assert(html.includes('id="startup-fallback"'))
     assert(html.includes('filteredDeliveryIssues'))
+    assert(html.includes('v-if="loading && !hasCurrentSnapshot"'))
+})
+
+test('same-session refresh retains both lists until the complete snapshot arrives', async () => {
+    const pending = deferred(), reached = deferred()
+    let refreshing = false
+    const h = dashboard({ get: endpoint => {
+        if (refreshing && endpoint.startsWith('deliveries/')) { reached.resolve(); return pending.promise }
+        return { status: 'ok', data: endpoint.startsWith('reminders/') ? [record(refreshing ? 'new' : 'job1')]
+            : endpoint.startsWith('deliveries/') ? [issue()] : [] }
+    } })
+    await h.load(); refreshing = true
+    const read = h.ui.fetchReminders(); await reached.promise
+    assert.equal(h.ui.loading.value, true)
+    assert.equal(h.ui.hasCurrentSnapshot.value, true)
+    assert.equal(h.ui.actionsDisabled.value, true)
+    assert.equal(h.ui.reminders.value[0].job_id, 'job1')
+    assert.equal(h.ui.deliveryIssues.value[0].delivery_id, 'delivery1')
+    pending.resolve({ status: 'ok', data: [issue('new-delivery')] }); await read
+    assert.equal(h.ui.reminders.value[0].job_id, 'new')
+    assert.equal(h.ui.deliveryIssues.value[0].delivery_id, 'new-delivery')
+    assert.equal(h.ui.actionsDisabled.value, false)
+})
+
+test('successful task action refresh keeps the list visible and cannot submit again', async () => {
+    const pending = deferred(), reached = deferred()
+    let refreshing = false
+    const h = dashboard({
+        get: endpoint => {
+            if (refreshing && endpoint.startsWith('reminders/')) { reached.resolve(); return pending.promise }
+            return { status: 'ok', data: endpoint.startsWith('reminders/') ? [record()]
+                : endpoint.startsWith('deliveries/') ? [issue()] : [] }
+        },
+        post: () => { refreshing = true; return { status: 'ok', msg: 'done' } },
+    })
+    await h.load()
+    const action = h.ui.doAction('pause', 'job1'); await reached.promise
+    assert.equal(h.ui.hasCurrentSnapshot.value, true)
+    assert.equal(h.ui.reminders.value.length, 1)
+    assert.equal(h.ui.deliveryIssues.value.length, 1)
+    await h.ui.doAction('resume', 'job1')
+    assert.equal(h.posts().length, 1)
+    pending.resolve({ status: 'ok', data: [{ ...record(), paused: true }] }); await action
+    assert.equal(h.ui.reminders.value[0].paused, true)
+    assert.equal(h.ui.mutationBusy.value, false)
+})
+
+test('failed refresh removes the unusable snapshot and leaves actions disabled', async () => {
+    let fail = false
+    const h = dashboard({ get: endpoint => {
+        if (fail && endpoint.startsWith('reminders/')) throw new Error('offline')
+        return { status: 'ok', data: endpoint.startsWith('reminders/') ? [record()] : [] }
+    } })
+    await h.load(); fail = true
+    await h.ui.fetchReminders()
+    assert.equal(h.ui.hasCurrentSnapshot.value, false)
+    assert.equal(h.ui.reminders.value.length, 0)
+    assert.equal(h.ui.actionsDisabled.value, true)
+    assert.equal(h.ui.loadError.value, 'offline')
+})
+
+test('closing a dialog restores focus without scrolling and does not reuse stale focus', async () => {
+    const h = dashboard(); await h.load()
+    const focuses = []
+    h.scope.document.activeElement = { isConnected: true, focus: options => focuses.push(plain(options)) }
+    h.ui.modalElement.value = { querySelector: () => ({ focus: options => focuses.push(plain(options)) }) }
+    h.ui.reviewDelivery('retry', h.ui.deliveryIssues.value[0]); await Promise.resolve()
+    h.ui.closeModal(); await Promise.resolve()
+    assert.deepEqual(focuses, [{ preventScroll: true }, { preventScroll: true }])
+    await h.ui.doAction('pause', 'job1')
+    assert.equal(focuses.length, 2)
+})
+
+test('token dialog keeps original trigger focus and restores only after submission unlocks', async () => {
+    const h = dashboard({ post: endpoint => endpoint === 'reminders/delete'
+        ? { status: 'error', msg: '请确认删除令牌: abc' } : { status: 'ok', msg: 'done' } })
+    await h.load()
+    const focuses = []
+    h.scope.document.activeElement = {
+        isConnected: true,
+        focus: options => focuses.push({ options: plain(options), busy: h.ui.mutationBusy.value }),
+    }
+    await h.ui.doAction('delete', 'job1')
+    h.scope.document.activeElement = { isConnected: true, focus: () => assert.fail('Must not focus a modal trigger') }
+    await h.ui.confirmDelete()
+    assert.equal(focuses.length, 0)
+    h.ui.deleteToken.value = 'abc'; await h.ui.confirmDelete(); await Promise.resolve()
+    assert.deepEqual(focuses, [{ options: { preventScroll: true }, busy: false }])
+})
+
+test('toast count is capped and displaced notifications release their timers', async () => {
+    let sequence = 0
+    const h = dashboard({ post: () => ({ status: 'ok', msg: `result-${++sequence}` }) }); await h.load()
+    for (let i = 0; i < 7; i++) await h.ui.doAction('pause', 'job1')
+    assert.deepEqual(plain(h.ui.toasts.value.map(toast => toast.message)), ['result-5', 'result-6', 'result-7'])
+    assert.equal(h.timers.size, 3)
+})
+
+test('identical notifications merge and renew one timer without stale expiry', async () => {
+    const h = dashboard(); await h.load()
+    await h.ui.doAction('pause', 'job1')
+    const id = h.ui.toasts.value[0].id
+    const [oldTimer, oldExpiry] = [...h.timers.entries()].find(([, timer]) => timer.delay === 4000)
+    await h.ui.doAction('pause', 'job1')
+    assert.equal(h.ui.toasts.value.length, 1)
+    assert.equal(h.ui.toasts.value[0].id, id)
+    assert.equal(h.timers.has(oldTimer), false)
+    assert.equal(h.timers.size, 1)
+    oldExpiry.callback()
+    assert.equal(h.ui.toasts.value.length, 1)
+    const expiry = [...h.timers.values()].find(timer => timer.delay === 4000)
+    expiry.callback()
+    assert.equal(h.ui.toasts.value.length, 0)
+    assert.equal(h.timers.size, 0)
+})
+
+test('different operation results are not merged just because their titles match', async () => {
+    const h = dashboard({ post: endpoint => ({ status: 'ok', msg: endpoint }) }); await h.load()
+    await h.ui.doAction('pause', 'job1')
+    await h.ui.doAction('resume', 'job1')
+    assert.equal(h.ui.toasts.value.length, 2)
+    assert.deepEqual(plain(h.ui.toasts.value.map(toast => toast.message)), ['reminders/pause', 'reminders/resume'])
+})
+
+test('dismissal hides only the selected notification and never changes data or submits', async () => {
+    const h = dashboard({ post: endpoint => ({ status: 'ok', msg: endpoint }) }); await h.load()
+    await h.ui.doAction('pause', 'job1'); await h.ui.doAction('resume', 'job1')
+    const reminders = plain(h.ui.reminders.value), deliveries = plain(h.ui.deliveryIssues.value)
+    const posts = h.posts().length, remaining = h.ui.toasts.value[1].id
+    h.ui.dismissToast(h.ui.toasts.value[0].id)
+    h.ui.dismissToast(-1)
+    assert.deepEqual(plain(h.ui.toasts.value.map(toast => toast.id)), [remaining])
+    assert.equal(h.timers.size, 1)
+    assert.equal(h.posts().length, posts)
+    assert.deepEqual(plain(h.ui.reminders.value), reminders)
+    assert.deepEqual(plain(h.ui.deliveryIssues.value), deliveries)
+})
+
+test('success notifications do not displace errors and new errors replace oldest successes', async () => {
+    let error = false, sequence = 0
+    const h = dashboard({ post: () => ({ status: error ? 'error' : 'ok', msg: `result-${++sequence}` }) }); await h.load()
+    await h.ui.doAction('pause', 'job1')
+    error = true; await h.ui.doAction('pause', 'job1')
+    error = false
+    await h.ui.doAction('pause', 'job1'); await h.ui.doAction('pause', 'job1')
+    assert.deepEqual(plain(h.ui.toasts.value.map(toast => toast.message)), ['result-2', 'result-3', 'result-4'])
+    error = true; await h.ui.doAction('pause', 'job1')
+    assert.deepEqual(plain(h.ui.toasts.value.map(toast => toast.message)), ['result-2', 'result-4', 'result-5'])
+    assert.equal(h.timers.size, 3)
+})
+
+test('an all-error stack suppresses success notices but keeps the newest errors bounded', async () => {
+    let error = true, sequence = 0
+    const h = dashboard({ post: () => ({ status: error ? 'error' : 'ok', msg: `result-${++sequence}` }) }); await h.load()
+    for (let i = 0; i < 3; i++) await h.ui.doAction('pause', 'job1')
+    error = false; await h.ui.doAction('pause', 'job1')
+    assert.deepEqual(plain(h.ui.toasts.value.map(toast => toast.message)), ['result-1', 'result-2', 'result-3'])
+    error = true; await h.ui.doAction('pause', 'job1')
+    assert.deepEqual(plain(h.ui.toasts.value.map(toast => toast.message)), ['result-2', 'result-3', 'result-5'])
+    assert.equal(h.timers.size, 3)
+})
+
+test('same text with a different severity remains distinct', async () => {
+    const h = dashboard({ post: () => ({ status: 'error', msg: 'same' }) }); await h.load()
+    await h.ui.doAction('pause', 'job1')
+    await h.ui.doAction('pause', 'job1')
+    assert.equal(h.ui.toasts.value.length, 1)
+    h.ui.toasts.value[0].type = 'success'
+    await h.ui.doAction('pause', 'job1')
+    assert.equal(h.ui.toasts.value.length, 2)
+    assert.deepEqual(plain(h.ui.toasts.value.map(toast => toast.type)), ['success', 'error'])
+})
+
+test('unmount clears notification timers and late requests cannot create more', async () => {
+    const pending = deferred(), h = dashboard({ post: () => pending.promise }); await h.load()
+    const request = h.ui.doAction('pause', 'job1')
+    h.unmount()
+    pending.reject(new Error('late offline')); await request
+    assert.equal(h.timers.size, 0)
+    assert.equal(h.ui.toasts.value.length, 0)
+})
+
+test('toast close button is wired with matching Chinese and English labels', async () => {
+    const h = dashboard(); await h.load()
+    const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8')
+    assert(html.includes('@click="dismissToast(toast.id)"'))
+    assert(html.includes(':aria-label="t(\'closeToast\')"'))
+    assert.equal(h.ui.t('closeToast'), '关闭通知')
+    h.changeLocale('en')
+    assert.equal(h.ui.t('closeToast'), 'Dismiss notification')
+    assert.deepEqual(Object.keys(h.scope.window.ReminderDashboardMessages.zh).sort(),
+        Object.keys(h.scope.window.ReminderDashboardMessages.en).sort())
+})
+
+test('toast replacement does not retain outgoing notices in a transition group', () => {
+    const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8')
+    assert(!html.includes('<transition-group'))
+    assert(html.includes('data-toast'))
+})
+
+test('toast styling avoids background blur and white hover fills without removing keyboard focus', () => {
+    const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8')
+    const css = fs.readFileSync(path.join(web, 'style.css'), 'utf8')
+    const panel = css.match(/\.glass-panel\.toast-panel\s*\{([^}]+)\}/)[1]
+    const close = html.match(/<button[^>]*class="toast-close [^"]*"[^>]*>/)[0]
+    assert(html.includes('class="glass-panel toast-panel '))
+    assert.match(panel, /background:\s*#[a-f\d]{6};/i)
+    assert.match(panel, /\bbackdrop-filter:\s*none;/)
+    assert.match(panel, /-webkit-backdrop-filter:\s*none;/)
+    assert.match(css, /\.toast-close\s*\{\s*background:\s*transparent;/)
+    assert(close.includes('hover:text-white'))
+    assert(!close.includes('hover:bg-'))
+    assert.match(css, /button:focus-visible\s*\{[^}]*outline:\s*2px solid/)
 })

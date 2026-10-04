@@ -324,22 +324,26 @@ def test_recovery_prompt_is_owner_scoped_and_skips_mixed_batch(reminder_main, tm
         delivery_id = await plugin._delivery.begin(SID, record)
         await plugin._delivery.mark(SID, delivery_id, "failed")
 
-        owner_request = SimpleNamespace(system_prompt=[])
+        owner_request = SimpleNamespace(system_prompt=[], user_prompt=[])
         await plugin.inject_delivery_issues(_event(plugin, reminder_main), owner_request)
-        assert len(owner_request.system_prompt) == 1
-        assert delivery_id in owner_request.system_prompt[0].content
+        assert owner_request.system_prompt == []
+        assert len(owner_request.user_prompt) == 1
+        assert not owner_request.user_prompt[0].persist
+        assert delivery_id in owner_request.user_prompt[0].content
 
-        other_request = SimpleNamespace(system_prompt=[])
+        other_request = SimpleNamespace(system_prompt=[], user_prompt=[])
         await plugin.inject_delivery_issues(
             _event(plugin, reminder_main, user_id="20002"), other_request
         )
         assert other_request.system_prompt == []
+        assert other_request.user_prompt == []
 
         mixed = _event(plugin, reminder_main)
         mixed.messages.insert(0, SimpleNamespace(sender=SimpleNamespace(user_id="20002")))
-        mixed_request = SimpleNamespace(system_prompt=[])
+        mixed_request = SimpleNamespace(system_prompt=[], user_prompt=[])
         await plugin.inject_delivery_issues(mixed, mixed_request)
         assert mixed_request.system_prompt == []
+        assert mixed_request.user_prompt == []
 
     asyncio.run(run())
 

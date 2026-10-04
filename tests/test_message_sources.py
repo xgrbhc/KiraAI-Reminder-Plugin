@@ -147,7 +147,7 @@ def test_admin_only_checks_entire_batch_not_selected_admin(plugin):
             result = await plugin.set_reminder(
                 event, content="test", time="2030-01-01 10:00", source_ref=admin_ref,
             )
-            assert "需目标用户确认" in result
+            assert "待确认请求" in result
         assert not plugin._storage.path.exists()
     asyncio.run(run())
 
@@ -181,7 +181,7 @@ def test_mention_is_per_message_even_for_same_user(plugin):
     result = asyncio.run(plugin.set_reminder(
         event, content="test", time="2030-01-01 10:00", source_ref=reference,
     ))
-    assert "需目标用户确认" in result
+    assert "待确认请求" in result
     assert not plugin._storage.path.exists()
 
 
@@ -233,7 +233,7 @@ def test_mixed_batch_action_is_rejected_even_for_admin(plugin):
         event, content="test", time="2030-01-01 10:00", action="perform an action",
         source_ref=rows(plugin, event)[0]["source_ref"],
     ))
-    assert result == sources_module.CONFIRMATION_REQUIRED
+    assert "待确认请求" in result
     assert not plugin._storage.path.exists()
 
 
@@ -252,9 +252,8 @@ def test_mixed_batch_action_is_rejected_even_for_admin(plugin):
 def test_other_entry_points_reject_before_reading_private_records(plugin, tool, params):
     plugin._reminder_service = lambda: pytest.fail("must not read reminder data")
     event = batch(message("bob"), message())
-    params = {**params, "source_ref": rows(plugin, event)[1]["source_ref"]}
     result = asyncio.run(getattr(plugin, tool)(event, **params))
-    assert result == sources_module.CONFIRMATION_REQUIRED or "混合发送者批次不能" in result
+    assert result == sources_module.CONFIRMATION_REQUIRED or "确认未完成" in result
     assert not plugin._storage.path.exists()
 
 
@@ -305,14 +304,15 @@ def test_no_dynamic_source_table_is_added_to_request_prompts(plugin, reminder_ma
         event = batch(message(), message("bob"))
         before = pickle.dumps(event)
         prompt = Prompt("static-prefix", name="output")
-        request = SimpleNamespace(system_prompt=[prompt], tool_set=None)
+        request = SimpleNamespace(system_prompt=[prompt], user_prompt=[], tool_set=None)
         await plugin.inject_usage_prompt(event, request)
         await plugin.enforce_autonomy_tool_policy(event, request)
         await plugin.inject_delivery_issues(event, request)
         assert request.system_prompt[0] is prompt
         assert len(request.system_prompt) == 2
-        assert "source_ref" not in str(request.system_prompt)
+        assert request.system_prompt[1].content == plugin._get_usage_prompt()
         assert "src_" not in str(request.system_prompt)
+        assert request.user_prompt == []
         await plugin.list_message_sources(event)
         assert len(request.system_prompt) == 2
         assert pickle.dumps(event) == before

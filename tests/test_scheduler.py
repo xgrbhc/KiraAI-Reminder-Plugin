@@ -22,6 +22,25 @@ class FakeScheduler:
         self.jobs.append((func, kwargs))
 
 
+def test_retry_does_not_publish_a_changed_reminder(reminder_main, tmp_path: Path):
+    async def run():
+        plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
+        plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")
+        attach_delivery(plugin, reminder_main, tmp_path)
+        plugin._fire_semaphore = asyncio.Semaphore(3)
+        sid = "qq:dm:10001"
+        original = {"job_id": "job-1", "content": "original", "repeat": "none"}
+        await plugin._storage.save({sid: [original]})
+        delivery_id = await plugin._delivery.begin(sid, original)
+        await plugin._storage.save({sid: [dict(original, action="not approved")]})
+        await plugin._fire_reminder(sid, original, delivery_id=delivery_id)
+        entry = (await plugin._delivery_storage.load())[sid][0]
+        assert entry["status"] == "failed"
+        assert "changed after retry" in entry["last_error"]
+        assert (await plugin._storage.load())[sid]
+    asyncio.run(run())
+
+
 def test_trigger_types_and_registration_options(reminder_main, tmp_path: Path):
     plugin = reminder_main.ReminderPlugin.__new__(reminder_main.ReminderPlugin)
     plugin._storage = reminder_main.ReminderStorage(tmp_path / "reminders.json")

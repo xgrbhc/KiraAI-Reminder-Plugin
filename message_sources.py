@@ -24,8 +24,8 @@ MAX_ELEMENTS = 64
 MAX_RESULT_CHARS = 12000
 CONFIRMATION_REQUIRED = (
     "❌ 多人或混合来源批次中的此类操作需要对应用户确认。"
-    "当前版本尚未支持跨轮待确认请求，请让对应用户单独提出该操作；"
-    "不得借用最后发言人的身份继续执行。"
+    "请先调用 list_message_sources 并传入对应消息的 source_ref；"
+    "自主意图工具仍不支持混合批次，不得借用最后发言人的身份。"
 )
 
 
@@ -154,6 +154,12 @@ def requires_source_selection(event: Any) -> bool:
     sources = [_source(event, message) for message in messages]
     return (any(source.kind == "unknown" for source in sources)
             or len({source.actor_context for source in sources}) > 1)
+
+
+def inspect_user_message(event: Any, message: Any) -> SourceEvent | None:
+    """Validate one raw message without issuing references or inheriting envelopes."""
+    source = _source(event, message)
+    return source.context if source.kind == "user" else None
 
 
 def _fragment(message: Any) -> tuple[str, bool]:

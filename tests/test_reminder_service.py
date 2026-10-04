@@ -14,6 +14,9 @@ def make_plugin(reminder_main, path: Path):
     plugin.config = SimpleNamespace(admin_users=[])
     plugin._get_sid = lambda _event: "qq:dm:10001"
     plugin._check_permission = lambda *_args: True
+    plugin._get_principal = lambda _event: reminder_main.PrincipalContext(
+        reminder_main.PrincipalKind.WEB, "web-admin", trusted=True,
+    )
     plugin._check_create_permission = lambda _event: (True, "")
     plugin._check_action_permission = lambda _event, _action: (True, "")
     plugin._get_creator_info = lambda _event: {"creator_id": "10001", "creator_name": "Alice"}

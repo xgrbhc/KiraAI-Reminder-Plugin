@@ -58,6 +58,8 @@ KiraAI/
                 ├── autonomy.py
                 ├── identity.py
                 ├── message_sources.py
+                ├── confirmation.py
+                ├── confirmation_routes.py
                 ├── permissions.py
                 ├── schema.json
                 ├── manifest.json
@@ -76,6 +78,7 @@ KiraAI/
                      ├── test_identity_permissions.py
                      ├── test_adapter_identity.py
                      ├── test_message_sources.py
+                     ├── test_confirmation.py
                      └── test_storage_migration.py
 ```
 
@@ -91,15 +94,23 @@ KiraAI/
 - `advanced_config.autonomy_allowed_tools`：自主事件工具白名单。非 `trusted_admin` 模式会继续限制为插件自身安全工具。
 - `advanced_config.usage_prompt`：注入 LLM 请求的插件使用提示词，用于指导模型何时调用提醒工具。
 
+默认使用说明已同步按需来源查询和单次真实确认规则，代码备用默认值与 schema 一致。升级不会覆盖保存的 `usage_prompt`；若要采用新版，可在插件高级配置中粘贴 [已确认改稿第 2.4 节](docs/PROMPT_CHANGE_PROPOSAL.md) 的完整文本，再按当前部署方式保存／重载。不需要卸载插件或删除配置。
+
+未确认投递摘要只在本轮最新用户输入末尾提供，不进入静态系统提示词或保存的用户消息历史；最多 5 条，内容使用有界 JSON 数据表示。正常 Tool 结果仍会进入会话历史，不承诺零 Token 成本或固定缓存命中率。实施及验证边界见 [缓存与提示词检查](docs/CACHE_PROMPT_REVIEW.md)。
+
 升级到 v2.2.0 时，旧提醒会幂等迁移到 identity schema v2。首次迁移前会在插件数据目录生成 `reminders.pre-v2.2.backup.json`；无法恢复所有者的群聊旧记录仅管理员可见和管理。
 
 当前身份隔离改进使用 identity schema v3：用户身份按“适配器名称＋用户 ID”区分，同号不自动合并，适配器名称区分大小写且须与会话 ID 前缀一致。旧提醒和投递记录中的提醒快照会在加载时同步迁移，保留原有所有者、内容和调度信息。首次迁移前分别生成 `reminders.pre-identity-v3.backup.json` 和 `delivery_state.pre-identity-v3.backup.json`（对应文件有待迁移记录时）；旧备份不覆盖。自动绑定旧权限时，配置目录会生成 `reminder_plugin.pre-adapter-acl.backup.json`。
 
-迁移任一文件失败会停止插件初始化，不启动调度器；修复读取或写入问题后重新加载可幂等完成迁移。本轮不修改主项目或运行时 LLM 缓存；按需来源 Tool 已实现，跨轮待确认请求尚未实现。完整边界及后续验收见 `docs/GROUP_IDENTITY_PLAN.md`。
+迁移任一文件失败会停止插件初始化，不启动调度器；修复读取或写入问题后重新加载可幂等完成迁移。本轮不修改主项目或运行时 LLM 缓存；按需来源 Tool 与轻量待确认请求已实现。完整边界及后续验收见 `docs/GROUP_IDENTITY_PLAN.md`、`docs/CONFIRMATION_PLAN.md`。
 
 多人或不同来源上下文合批时，LLM 可按需调用 `list_message_sources` 获取临时来源标记，再通过 `set_reminder(source_ref=...)` 为对应用户创建无 `action` 的普通个人提醒。标记只对当前批次有效，不授予权限；查询只读当前消息，不改写历史。单一用户且相同来源上下文仍可直接创建。
 
-批次中的潜在用户来源须全部通过当前创建策略；混有无权限用户、缺失身份或内部事件时不自动创建。多人查看、修改、删除和 `action` 仍需确认，目前返回拒绝说明，可让对应用户单独提出；不能把临时标记或 LLM 自报“已确认”当成授权。跨轮确认流程将在下一阶段实现。
+批次中的潜在用户来源须全部通过当前创建策略才自动创建；混有无权限用户时，所选用户本身获准可建立待确认请求，缺失身份或内部事件混入时仍不自动创建。多人查看、修改、删除和 `action` 使用 `source_ref` 建立待确认请求，由 LLM 自然询问一次；唯一普通请求回复“确认”或“同意”即可，多项时附请求编号。群聊确认需 @ 或回复当前机器人。群聊查询内容可能被展示给群成员，需要私密管理时使用认证 WebUI。
+
+重要删除回复“确认删除”，唯一请求无需编号；取消已有重要标记也需一次确认，避免先取消标记再绕过删除保护。普通私聊的创建、查询、编辑、暂停／恢复保持原体验；WebUI 保留原页面确认和重要删除令牌，不需再到聊天确认。重要跟进不能被自主关闭／替换顺带清理，正常到期回执清理语义不变。
+
+待确认请求保存固定参数，5 分钟有效；确认执行时重新校验身份、权限和目标变化，模型不能替用户确认或替换参数。同一请求仅消费一次；停用、重载或重启失效。执行仅限真实确认消息所在批次，模型未在本轮完成时可在有效期内重新确认；失败／结果不明不自动重复提交。多人自主意图工具仍保守拒绝，聊天确认不放开结果不明／含 `action` 的投递重试和忽略限制。
 
 如果 `reminders.json`、`autonomous_state.json` 或新增的 `delivery_state.json` 已存在但无法读取、JSON 不完整或顶层不是对象，插件会报错并保留原文件，不再把它当作空数据写回。遇到此错误时，先关闭 KiraAI，备份异常文件，再检查权限或从可信备份恢复；不要直接删除或清空原文件。文件确实不存在时仍按首次使用处理。
 
@@ -120,6 +131,10 @@ KiraAI/
 重试投递、忽略此次异常和删除提醒使用页面内确认框，兼容主 WebUI 的 iframe 沙箱。重要提醒仍须完成后端令牌确认。提交时禁用重复操作；切换会话后清空旧列表，须重新加载后才能操作。读取失败不会被当作“没有提醒”；提交结果不明时需先刷新核对，不自动重复提交。
 
 前端检查记录与剩余改进项见 [前端检查记录](docs/FRONTEND_REVIEW.md)。新增提示文案的中英文在插件内维护，不修改主项目翻译文件。
+
+同会话操作后的后台刷新会保留当前列表，避免加载占位导致页面跳到顶部；刷新期间仍暂停写操作。切换会话或读取失败时清空旧数据，确认框焦点恢复不会主动滚动页面。
+
+操作通知最多同时显示 3 条，约 4 秒后自动消失，也可点击右侧 × 关闭。标题、正文和类型完全相同的通知合并并重新计时；成功提示不会挤掉错误提示。关闭通知只隐藏消息，不撤销操作或删除提醒。
 
 对应页面与接口路径：
 
@@ -162,6 +177,7 @@ KiraAI/
 作为智能体的“海马体”，AI 可通过以下 `Function Calling` 自主操纵系统：
 
 - 🛠 `list_message_sources`：按需读取当前批次的昵称、消息片段及临时来源标记；无提醒需求时不必调用，返回量有界。
+- 🛠 `list_pending_reminder_requests` / `confirm_reminder_request`：按需查询最小请求标记，并在真实用户确认后执行保存的操作；无确认需求时不必查询，不每轮附加身份表。
 - 🛠 `set_reminder`：注册含有 `action` 联想、`category` 等高级元标记的复合提醒；多人普通创建需有效 `source_ref` 并通过批次权限检查。
 - 🛠 `list_reminders`：探查时间环境以支撑模型作出决策。
 - 🛠 `delete_reminder` / `confirm_delete_reminder`：处理带 `令牌二次认证` 的关键节点删除流。
@@ -184,6 +200,8 @@ node --test tests/test_dashboard.js
 ```
 
 前端测试使用 Node 内置测试框架，无需安装 npm 依赖。可用 `python tests/dashboard_server.py --port 0` 启动隔离浏览器测试页面；它只在本机监听，使用内存测试数据和模拟接口，不连接 Kira 或 LLM。按 Ctrl+C 停止测试服务器。
+
+隔离页面可附加 `?sid=Test%3Adm%3Aalice&list_size=30&read_delay=600`，生成长列表并模拟读取延迟，以检查后台刷新时的滚动位置；这些参数仅用于测试服务器。
 
 该生态插件属于不断演进中的版本，欢迎提出 Issue 或者提交 Pull Request (PR) 来增加新的特性！
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import time
 import uuid
 from collections.abc import Callable, Collection
@@ -9,8 +10,8 @@ from typing import Any
 
 from core.plugin import logger
 
-from .identity import PrincipalContext
-from .permissions import ReminderOperation, can_manage_reminder, can_view_reminder
+from .identity import PrincipalContext, PrincipalKind
+from .permissions import ReminderOperation, can_manage_reminder
 from .storage import ReminderStorage
 from .time_utils import (
     determine_random_count,
@@ -42,6 +43,7 @@ class ReminderService:
         admin_users: Collection[str],
         remove_job: Callable[[str], None],
         add_job: Callable[[str, dict], None],
+        confirmed_delete: bool = False,
     ) -> None:
         self._storage = storage
         self._pending = pending
@@ -56,6 +58,7 @@ class ReminderService:
         self._admin_users = admin_users
         self._remove_job = remove_job
         self._add_job = add_job
+        self._confirmed_delete = confirmed_delete
 
     def _cleanup_tokens(self) -> None:
         now = time.time()
@@ -134,6 +137,12 @@ class ReminderService:
                 return "❌ 不能设置过去的时间"
 
             async with self._storage.modify() as data:
+                allowed, reason = self._check_create_permission(event)
+                if not allowed:
+                    return reason
+                allowed, reason = self._check_action_permission(event, action)
+                if not allowed:
+                    return reason
                 data.setdefault(sid, [])
 
                 if time_range_end:
@@ -190,15 +199,9 @@ class ReminderService:
             data = await self._storage.load()
             reminders = data.get(sid, [])
             is_admin_user = self._is_admin_user(event)
-            principal = self._get_principal(event)
             filtered = [
                 r for r in reminders
-                if can_view_reminder(
-                    principal,
-                    r,
-                    sid=sid,
-                    admin_users=self._admin_users,
-                )
+                if self._check_permission(event, r, ReminderOperation.VIEW)
             ]
 
             if not filtered:
@@ -255,9 +258,11 @@ class ReminderService:
                     for target in targets
                 ):
                     return "❌ 权限拒绝：批次中包含当前主体无权删除的任务。"
-                if any(r.get("important") for r in targets):
+                if any(r.get("important") for r in targets) and not self._confirmed_delete:
                     job_ids = [r["job_id"] for r in targets if "job_id" in r]
                     token = self._create_token(event, sid, job_ids, reminder["content"])
+                    self._pending[token]["targets"] = copy.deepcopy(targets)
+                    self._pending[token]["batch_id"] = batch_id if delete_batch else None
                     return (f"注意: 「{reminder['content']}」是重要提醒\n"
                             f"请确认删除令牌: {token}")
 
@@ -284,12 +289,20 @@ class ReminderService:
             if not pending:
                 return "令牌无效或已过期"
             principal = self._get_principal(event)
+            if not (principal.trusted and principal.kind is PrincipalKind.WEB) and not self._confirmed_delete:
+                return "❌ 重要删除需要对应用户的真实确认"
             if pending.get("actor_key") != principal.actor_key and not self._is_admin_user(event):
                 return "❌ 权限拒绝：确认令牌不属于当前主体。"
             sid, job_ids, content = pending["session_id"], pending["job_ids"], pending["content"]
             async with self._storage.modify() as data:
                 reminders = data.get(sid, [])
                 targets = [r for r in reminders if r.get("job_id") in job_ids]
+                batch_id = pending.get("batch_id")
+                if (len(targets) != len(job_ids)
+                        or ("targets" in pending and targets != pending["targets"])
+                        or (batch_id and [r for r in reminders if r.get("random_batch_id") == batch_id] != targets)):
+                    self._pending.pop(confirm_token, None)
+                    return "❌ 目标提醒已变化或不存在，请重新查询并确认"
                 if any(
                     not can_manage_reminder(
                         principal,
@@ -344,6 +357,9 @@ class ReminderService:
                     return f"❌ 权限拒绝：您无权操作该任务 (创建人: {r.get('creator_name', '未知')})"
                 if not r.get("important"):
                     return f"并非重要提醒: {r['content']}"
+                principal = self._get_principal(event)
+                if not (principal.trusted and principal.kind is PrincipalKind.WEB) and not self._confirmed_delete:
+                    return "❌ 取消重要标记需要对应用户的真实确认"
                 r["important"] = False
                 return f"取消重要标记: {r['content']}"
         except Exception as e:

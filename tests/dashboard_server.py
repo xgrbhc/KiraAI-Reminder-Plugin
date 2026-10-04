@@ -5,6 +5,7 @@ This server binds only loopback and never calls KiraAI or an LLM.
 """
 
 import argparse
+from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -34,6 +35,12 @@ const state = {
   deliveries:[]
  }
 };
+const preview = new URLSearchParams(location.search);
+const listSize = Math.min(100, Math.max(0, Number(preview.get('list_size')) || 0));
+const readDelay = Math.min(2000, Math.max(0, Number(preview.get('read_delay')) || 0));
+for(let i=2;i<listSize;i++) state['Test:dm:alice'].reminders.push({
+ job_id:'scroll-test-'+i,content:'隔离滚动测试 '+i,time:'2030-01-01 12:00',repeat:'none',creator_id:'alice',owner_id:'alice',creator_name:'Alice'
+});
 state['Test:dm:alice'].deliveries.push({delivery_id:'delivery1',job_id:'job1',status:'unconfirmed',reminder:{...state['Test:dm:alice'].reminders[0]}});
 const copy = value => JSON.parse(JSON.stringify(value));
 const ok = data => ({status:'ok',data});
@@ -44,6 +51,7 @@ window.PluginPageContext = {
  onContext: () => () => {},
  api: {
   async get(endpoint) {
+   if(readDelay) await new Promise(resolve=>setTimeout(resolve,readDelay));
    if(endpoint==='sessions') return ok(Object.entries(state).map(([id,s])=>({id,count:s.reminders.length,users:[...new Map(s.reminders.map(r=>[r.creator_id,{id:r.creator_id,name:r.creator_name}])).values()]})));
    const [kind,...parts]=endpoint.split('/'); const sid=decodeURIComponent(parts.join('/'));
    return state[sid] && ['reminders','deliveries'].includes(kind) ? ok(copy(state[sid][kind])) : error('Test session not found');
@@ -73,7 +81,7 @@ window.PluginPageContext = {
     else if(action==='resume') r.paused=false;
     else return error('Invalid test action');
    }
-   return {status:'ok',msg:'隔离测试操作成功（无真实副作用）'};
+   return {status:'ok',msg:'隔离测试操作成功（无真实副作用）：'+endpoint+' / '+(payload.job_id||payload.delivery_id||'')};
   }
  }
 };
@@ -85,6 +93,10 @@ class Handler(BaseHTTPRequestHandler):
         route = urlsplit(self.path).path
         if route == "/":
             body, content_type = PARENT, "text/html"
+            query = urlsplit(self.path).query
+            if query:
+                body = body.replace('src="/dashboard/index.html"',
+                                    f'src="/dashboard/index.html?{escape(query, quote=True)}"')
         elif route == "/dashboard/test-bridge.js":
             body, content_type = BRIDGE, "text/javascript"
         elif route in {f"/dashboard/{name}" for name in ("index.html", "app.js", "i18n.js", "style.css")}:

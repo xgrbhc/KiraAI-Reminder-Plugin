@@ -78,6 +78,12 @@ class ReminderStorage:
             self._unsafe_save(data)
 
     @asynccontextmanager
+    async def read(self) -> AsyncGenerator[Dict[str, List[Dict]], None]:
+        """Hold a read lock while validating a related ledger transaction."""
+        async with self._lock:
+            yield self._unsafe_load()
+
+    @asynccontextmanager
     async def modify(self) -> AsyncGenerator[Dict[str, List[Dict]], None]:
         """Provide a locked read-modify-write transaction."""
         async with self._lock:

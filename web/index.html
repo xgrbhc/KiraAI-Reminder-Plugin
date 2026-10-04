@@ -114,12 +114,12 @@
         </section>
 
         <!-- Task List -->
-        <div class="glass-panel p-8 animate-fade-in" style="animation-delay: 0.2s">
+        <div :aria-busy="loading" class="glass-panel p-8 animate-fade-in" style="animation-delay: 0.2s">
             <h2 class="text-2xl font-semibold mb-6 flex items-center gap-3">
                 <i class="fa-solid fa-list-check text-indigo-400"></i> 行动清单
             </h2>
 
-            <div v-if="loading" class="text-center py-24">
+            <div v-if="loading && !hasCurrentSnapshot" class="text-center py-24">
                 <i class="fa-solid fa-circle-notch fa-spin text-5xl text-indigo-500 mb-6"></i>
                 <p class="text-gray-400 text-lg tracking-widest uppercase">{{ t('loading') }}</p>
             </div>
@@ -216,16 +216,17 @@
 
         <!-- Toast Notifications -->
         <div aria-live="polite" class="fixed bottom-6 left-4 right-4 md:left-auto flex flex-col gap-3 z-[110]">
-            <transition-group name="list">
-                <div v-for="toast in toasts" :key="toast.id" class="glass-panel px-6 py-4 flex items-center gap-4 shadow-2xl transform transition-all duration-300 w-full max-w-sm" :class="toast.type === 'error' ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-emerald-500'">
-                    <i v-if="toast.type === 'error'" class="fa-solid fa-triangle-exclamation text-red-500 text-2xl"></i>
-                    <i v-else class="fa-solid fa-shield-check text-emerald-500 text-2xl"></i>
-                    <div>
-                        <p class="font-bold text-sm tracking-wide">{{ toast.title }}</p>
-                        <p class="text-xs text-gray-400 mt-1 break-words">{{ toast.message }}</p>
-                    </div>
+            <div v-for="toast in toasts" :key="toast.id" data-toast class="glass-panel toast-panel px-6 py-4 flex items-center gap-4 shadow-2xl w-full max-w-sm" :class="toast.type === 'error' ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-emerald-500'">
+                <i v-if="toast.type === 'error'" class="fa-solid fa-triangle-exclamation text-red-500 text-2xl"></i>
+                <i v-else class="fa-solid fa-shield-check text-emerald-500 text-2xl"></i>
+                <div class="min-w-0 flex-1">
+                    <p class="font-bold text-sm tracking-wide">{{ toast.title }}</p>
+                    <p class="text-xs text-gray-400 mt-1 break-words">{{ toast.message }}</p>
                 </div>
-            </transition-group>
+                <button type="button" @click="dismissToast(toast.id)" :aria-label="t('closeToast')" :title="t('closeToast')" class="toast-close shrink-0 w-8 h-8 rounded-full text-gray-400 hover:text-white transition-colors">
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
         </div>
     </div>
 

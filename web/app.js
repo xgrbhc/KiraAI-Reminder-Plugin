@@ -1,4 +1,5 @@
 const { createApp, ref, computed, watch, onMounted, onUnmounted, nextTick } = Vue
+const MAX_TOASTS = 3
 
 createApp({
     setup() {
@@ -10,6 +11,7 @@ createApp({
         const pluginContext = ref(null)
         const locale = ref('zh')
         const loadedSessionId = ref('')
+        const displayedSessionId = ref('')
         const mutationBusy = ref(false)
         const loadError = ref('')
         const deliveryStatusKnown = ref(false)
@@ -19,6 +21,7 @@ createApp({
         let unsubscribeContext = null
         let disposed = false
         const timers = new Set()
+        const toastTimers = new Map()
         const t = (key) => {
             const messages = window.ReminderDashboardMessages
             return messages?.[locale.value]?.[key] || messages?.zh?.[key] || key
@@ -65,6 +68,8 @@ createApp({
         const dataReady = computed(() => !loading.value && !!loadedSessionId.value
             && loadedSessionId.value === sessionId.value.trim())
         const actionsDisabled = computed(() => !dataReady.value || mutationBusy.value)
+        const hasCurrentSnapshot = computed(() => !!displayedSessionId.value
+            && displayedSessionId.value === sessionId.value.trim())
 
         // Counts reflect the filtered view.
         const pendingJobIds = computed(() => new Set(deliveryIssues.value.map(issue => issue.job_id)))
@@ -90,6 +95,7 @@ createApp({
         watch(sessionId, () => {
             requestSequence += 1
             loadedSessionId.value = ''
+            displayedSessionId.value = ''
             reminders.value = []
             deliveryIssues.value = []
             selectedUserId.value = null
@@ -99,13 +105,34 @@ createApp({
             closeModal(true)
         }, { flush: 'sync' })
 
-        const showToast = (title, message, type = 'success') => {
-            const id = ++toastSequence
-            toasts.value.push({ id, title, message, type })
-            const timer = setTimeout(() => {
+        const dismissToast = id => {
+            const timer = toastTimers.get(id)
+            if (timer !== undefined) {
+                clearTimeout(timer)
                 timers.delete(timer)
-                toasts.value = toasts.value.filter(t => t.id !== id)
+                toastTimers.delete(id)
+            }
+            toasts.value = toasts.value.filter(toast => toast.id !== id)
+        }
+
+        const showToast = (title, message, type = 'success') => {
+            if (disposed) return
+            const existing = toasts.value.find(toast => toast.title === title
+                && toast.message === message && toast.type === type)
+            if (existing) {
+                dismissToast(existing.id)
+            } else if (toasts.value.length >= MAX_TOASTS) {
+                // Successful operations must not displace visible error messages.
+                const oldestSuccess = toasts.value.find(toast => toast.type !== 'error')
+                if (!oldestSuccess && type !== 'error') return
+                dismissToast((oldestSuccess || toasts.value[0]).id)
+            }
+            const toast = existing || { id: ++toastSequence, title, message, type }
+            toasts.value.push(toast)
+            const timer = setTimeout(() => {
+                if (toastTimers.get(toast.id) === timer) dismissToast(toast.id)
             }, 4000)
+            toastTimers.set(toast.id, timer)
             timers.add(timer)
         }
 
@@ -148,6 +175,7 @@ createApp({
             showSessionDropdown.value = false
             const sid = sessionId.value.trim()
             if (!sid) {
+                displayedSessionId.value = ''
                 reminders.value = [] // Clear stale results on invalid input.
                 deliveryIssues.value = []
                 return showToast('参数校验失败', '必须提供目标频率基站 (Session ID)', 'error')
@@ -157,20 +185,30 @@ createApp({
             const isCurrent = () => sequence === requestSequence && sid === sessionId.value.trim()
             loading.value = true
             loadedSessionId.value = ''
-            reminders.value = []
-            deliveryIssues.value = []
+            // Keep the current session's DOM height stable during background refresh.
+            if (!hasCurrentSnapshot.value) {
+                reminders.value = []
+                deliveryIssues.value = []
+            }
             deliveryStatusKnown.value = false
             loadError.value = ''
             try {
                 const data = await readApi(`reminders/${encodeURIComponent(sid)}`, { _t: Date.now() })
                 if (!isCurrent()) return
-                reminders.value = responseData(data, true)
+                const nextReminders = responseData(data, true)
+                const nextDelivery = await fetchDeliveryIssues(sid, isCurrent)
+                if (!isCurrent()) return
+                reminders.value = nextReminders
+                deliveryIssues.value = nextDelivery.issues
+                deliveryStatusKnown.value = nextDelivery.known
+                displayedSessionId.value = sid
                 loadedSessionId.value = sid
-                await fetchDeliveryIssues(sid, isCurrent)
+                if (!nextDelivery.known) showToast(t('deliveryUnavailable'), nextDelivery.error, 'error')
             } catch (e) {
                 if (!isCurrent()) return
                 reminders.value = [] // Clear stale data after a connection failure.
                 deliveryIssues.value = []
+                displayedSessionId.value = ''
                 loadError.value = e.message || t('unavailable')
                 showToast(t('operationFailed'), loadError.value, 'error')
             } finally {
@@ -182,22 +220,20 @@ createApp({
             try {
                 const data = await readApi(`deliveries/${encodeURIComponent(sid)}`, { _t: Date.now() })
                 if (!isCurrent()) return
-                deliveryIssues.value = responseData(data, true)
-                deliveryStatusKnown.value = true
+                return { issues: responseData(data, true), known: true }
             } catch (e) {
                 if (!isCurrent()) return
-                deliveryIssues.value = []
-                showToast(t('deliveryUnavailable'), e.message, 'error')
+                return { issues: [], known: false, error: e.message }
             }
         }
 
         const openModal = (operation, message) => {
-            previousFocus = document.activeElement
+            if (!showConfirmModal.value) previousFocus = document.activeElement
             pendingOperation.value = Object.freeze(operation)
             confirmMessage.value = message
             deleteToken.value = ''
             showConfirmModal.value = true
-            nextTick(() => modalElement.value?.querySelector('button')?.focus())
+            nextTick(() => modalElement.value?.querySelector('button')?.focus({ preventScroll: true }))
         }
 
         const reviewDelivery = (decision, issue) => {
@@ -213,13 +249,14 @@ createApp({
 
         const runMutation = async (endpoint, payload) => {
             if (actionsDisabled.value || payload.session_id !== loadedSessionId.value) return
+            const focusToRestore = showConfirmModal.value ? previousFocus : null
             mutationBusy.value = true
             try {
                 const data = await pluginApi().post(endpoint, payload)
                 if (disposed) return
                 if (!data || !['ok', 'error'].includes(data.status)) throw new Error(t('invalidResponse'))
                 if (data.status === 'ok') {
-                    closeModal(true)
+                    closeModal(true, false)
                     const message = sessionId.value.trim() === payload.session_id ? data.msg
                         : `${payload.session_id}: ${data.msg || ''}`
                     showToast(endpoint.startsWith('deliveries/') ? t('saved') : t('taskSaved'), message || '')
@@ -234,12 +271,16 @@ createApp({
                     }
                 }
             } catch (e) {
-                closeModal(true)
+                closeModal(true, false)
                 loadedSessionId.value = ''
                 loadError.value = t('unknownOutcome')
                 showToast(t('operationFailed'), `${t('unknownOutcome')} ${e.message || ''}`, 'error')
             } finally {
                 mutationBusy.value = false
+                nextTick(() => {
+                    if (!disposed && !showConfirmModal.value && focusToRestore?.isConnected
+                        && !focusToRestore.disabled) focusToRestore.focus({ preventScroll: true })
+                })
             }
         }
 
@@ -256,12 +297,17 @@ createApp({
             await runMutation(`reminders/${action}`, {session_id: sid, job_id: jobId})
         }
 
-        const closeModal = (force = false) => {
+        const closeModal = (force = false, restoreFocus = true) => {
             if (mutationBusy.value && force !== true) return
+            const focusToRestore = showConfirmModal.value ? previousFocus : null
+            previousFocus = null
             showConfirmModal.value = false
             pendingOperation.value = null
             deleteToken.value = ''
-            nextTick(() => { if (previousFocus?.isConnected) previousFocus.focus() })
+            if (restoreFocus) nextTick(() => {
+                if (!disposed && !showConfirmModal.value && focusToRestore?.isConnected
+                    && !focusToRestore.disabled) focusToRestore.focus({ preventScroll: true })
+            })
         }
 
         const confirmDelete = async () => {
@@ -289,8 +335,8 @@ createApp({
             const controls = modalElement.value?.querySelectorAll('button:not(:disabled), input:not(:disabled)')
             if (!controls?.length) return
             const first = controls[0], last = controls[controls.length - 1]
-            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
-            if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus({ preventScroll: true }) }
+            if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus({ preventScroll: true }) }
         }
 
         const formatRepeat = (repeat, interval) => {
@@ -354,11 +400,13 @@ createApp({
             disposed = true
             requestSequence += 1
             for (const timer of timers) clearTimeout(timer)
+            timers.clear()
+            toastTimers.clear()
             unsubscribeContext?.()
         })
 
         return {
-            loading, reminders, deliveryIssues, filteredDeliveryIssues, pendingJobIds, toasts, availableSessions,
+            loading, reminders, deliveryIssues, filteredDeliveryIssues, pendingJobIds, toasts, dismissToast, availableSessions,
             sessionId, selectedUserId, currentSessionUsers, filteredReminders,
             showSessionDropdown,
             filteredSessions,
@@ -367,7 +415,7 @@ createApp({
             fetchReminders, doAction, reviewDelivery, formatRepeat,
             showConfirmModal, confirmMessage, deleteToken, closeModal, confirmDelete,
             pendingOperation, needsDeleteToken, confirmTitle, confirmButton, modalElement, trapModalFocus,
-            mutationBusy, actionsDisabled, loadError, deliveryStatusKnown, startupError, t
+            mutationBusy, actionsDisabled, loadError, deliveryStatusKnown, startupError, hasCurrentSnapshot, t
         }
     }
 }).mount('#app')

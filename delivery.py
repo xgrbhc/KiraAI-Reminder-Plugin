@@ -9,6 +9,7 @@ from typing import Any, Collection
 from .identity import PrincipalContext, PrincipalKind
 from .permissions import can_view_reminder
 from .storage import ReminderStorage
+from .confirmation import reminder_targets
 
 
 ISSUE_STATES = frozenset({"failed", "unconfirmed", "legacy_unconfirmed"})
@@ -271,10 +272,31 @@ class DeliveryTracker:
         autonomy_sessions: Collection[str],
         decision: str,
         allow_unsafe_retry: bool = False,
+        expected: dict | None = None,
     ) -> tuple[str, dict | None]:
+        # Always acquire reminder data before the ledger; release before cleanup.
+        async with self.reminders.read() as current_data:
+            if expected is not None:
+                try:
+                    target = expected["reminder"]
+                    if reminder_targets(current_data, sid, target["params"]) != target:
+                        return "原提醒已变化，请重新查询并确认", None
+                except ValueError:
+                    return "原提醒已不存在，请重新查询", None
+            message, entry_copy = await self._resolve_locked(
+                sid, delivery_id, principal, admin_users, autonomy_sessions, decision,
+                allow_unsafe_retry, expected, current_data,
+            )
+        if decision == "dismiss" and entry_copy:
+            await self._cleanup_confirmed(sid, entry_copy)
+        if entry_copy:
+            await self._prune_closed(sid)
+        return message, entry_copy
+
+    async def _resolve_locked(self, sid, delivery_id, principal, admin_users,
+                              autonomy_sessions, decision, allow_unsafe_retry, expected, current_data):
         if decision not in {"dismiss", "retry", "defer"}:
             return "无效处理方式", None
-        current_data = await self.reminders.load()
         entry_copy = None
         async with self.ledger.modify() as state:
             entry = next(
@@ -283,6 +305,8 @@ class DeliveryTracker:
             )
             if entry is None:
                 return "找不到投递记录", None
+            if expected is not None and entry != expected["entry"]:
+                return "投递记录已变化，请重新查询并确认", None
             if not self.may_review(
                 principal, entry.get("reminder") or {}, sid, admin_users, autonomy_sessions
             ):
@@ -326,8 +350,4 @@ class DeliveryTracker:
                     "reminder": dict(entry.get("reminder") or {}),
                 })
                 entry_copy["retry_delivery_id"] = new_id
-        if decision == "dismiss" and entry_copy:
-            await self._cleanup_confirmed(sid, entry_copy)
-        if entry_copy:
-            await self._prune_closed(sid)
         return "已记录处理决定", entry_copy
