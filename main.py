@@ -73,7 +73,7 @@ from .message_sources import MessageSources, requires_source_selection, CONFIRMA
 from .confirmation_routes import ConfirmationRoutes
 from .delivery import DeliveryTracker
 from .reminder_service import ReminderService
-from .scheduler import ReminderScheduler
+from .scheduler import ReminderScheduler, reminder_schedule_info
 from .time_utils import (
     determine_random_count,
     generate_multiple_random_times,
@@ -573,7 +573,10 @@ class ReminderPlugin(BasePlugin):
             sid = unquote(session_id)
             data = await self._storage.load()
             reminders = data.get(sid, [])
-            return {"status": "ok", "data": reminders}
+            scheduler = getattr(self, "_scheduler", None)
+            return {"status": "ok", "data": [
+                dict(record, **reminder_schedule_info(scheduler, record)) for record in reminders
+            ]}
         except Exception as e:
             logger.error(f"[Reminder] WebUI 获取提醒列表失败: {e}")
             return {"status": "error", "msg": str(e)}
@@ -1295,7 +1298,7 @@ class ReminderPlugin(BasePlugin):
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "提醒内容"},
-                "time": {"type": "string", "description": "提醒时间，格式 YYYY-MM-DD HH:MM"},
+                "time": {"type": "string", "description": "提醒时间，格式 YYYY-MM-DD HH:MM；日/周/月/年重复时表示首次开始时间，不会提前触发；不是下次执行时间。"},
                 "repeat": {"type": "string",
                            "enum": ["none", "daily", "weekly", "monthly", "yearly", "interval"],
                            "description": "重复类型，默认 none"},
@@ -1352,7 +1355,7 @@ class ReminderPlugin(BasePlugin):
 
     @register_tool(
         name="list_reminders",
-        description="列出当前用户可访问的提醒。多人时需 source_ref 并确认本次查询；已有准确 job_id 时无需反复查询。",
+        description="列出当前用户可访问的提醒。多人时需 source_ref 并确认本次查询；已有准确 job_id 时无需反复查询。重复提醒区分开始时间与下次执行时间，下次时间不代表投递成功。",
         params={"type": "object", "properties": {
             "source_ref": {"type": "string", "description": "多人时所选请求消息的来源标记"},
         }, "required": []}
@@ -1615,7 +1618,7 @@ class ReminderPlugin(BasePlugin):
             "properties": {
                 "job_id": {"type": "string", "description": "要修改的提醒 ID"},
                 "content": {"type": "string", "description": "新提醒内容（可选）"},
-                "time": {"type": "string", "description": "新提醒时间，格式 YYYY-MM-DD HH:MM（可选）"},
+                "time": {"type": "string", "description": "新提醒时间，格式 YYYY-MM-DD HH:MM（可选）；日/周/月/年重复时更新开始时间与周期锚点。"},
                 "repeat": {"type": "string", "enum": ["none", "daily", "weekly", "monthly", "yearly", "interval"], "description": "新重复类型（可选）"},
                 "interval_minutes": {"type": "integer", "description": "新间隔分钟数（可选）"},
                 "category": {"type": "string", "description": "新提醒分类（可选）"},

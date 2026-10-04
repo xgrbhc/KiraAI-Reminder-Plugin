@@ -17,6 +17,8 @@ window.ReminderDashboardMessages = {
         sessionFailed: '会话列表读取失败', operationFailed: '操作失败', saved: '处理决定已记录',
         taskSaved: '提醒操作已完成', unavailable: '数据读取失败，请刷新重试。',
         allUsers: '本会话全部', total: '当前筛选总数', loading: '正在读取…',
+        startTime: '开始', nextTime: '下次', schedulePaused: '已暂停', scheduleMissing: '未调度',
+        scheduleUnavailable: '调度不可用', schedulePending: '等待调度登记', scheduleUnknown: '暂无下次时间',
     },
     en: {
         retryTitle: 'Confirm reminder retry', dismissTitle: 'Confirm dismissal', deleteTitle: 'Confirm reminder deletion',
@@ -35,5 +37,7 @@ window.ReminderDashboardMessages = {
         sessionFailed: 'Could not load sessions', operationFailed: 'Operation failed', saved: 'Decision recorded',
         taskSaved: 'Reminder updated', unavailable: 'Could not load data. Refresh to retry.',
         allUsers: 'Everyone in this session', total: 'Filtered total', loading: 'Loading…',
+        startTime: 'Starts', nextTime: 'Next', schedulePaused: 'Paused', scheduleMissing: 'Not scheduled',
+        scheduleUnavailable: 'Scheduler unavailable', schedulePending: 'Waiting for scheduling', scheduleUnknown: 'Next run unavailable',
     },
 }

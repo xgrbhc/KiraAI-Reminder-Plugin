@@ -25,6 +25,37 @@ _FIRE_MAX_RETRIES = 3
 _FIRE_RETRY_DELAY = 5
 
 
+def reminder_schedule_info(scheduler: Any, reminder: dict) -> dict:
+    """Read a recurring job's live schedule without changing its stored record."""
+    if reminder.get("repeat", "none") not in {"daily", "weekly", "monthly", "yearly", "interval"}:
+        return {}
+    details = {"next_run_time": None, "schedule_status": "unknown"}
+    if reminder.get("paused"):
+        details["schedule_status"] = "paused"
+        return details
+    try:
+        if (scheduler is None or not getattr(scheduler, "running", False)
+                or not callable(getattr(scheduler, "get_job", None))):
+            details["schedule_status"] = "unavailable"
+            return details
+        job = scheduler.get_job(str(reminder.get("job_id") or ""))
+        if job is None:
+            details["schedule_status"] = "missing"
+        elif getattr(job, "pending", False):
+            details["schedule_status"] = "pending"
+        else:
+            next_time = getattr(job, "next_run_time", None)
+            if isinstance(next_time, datetime.datetime):
+                details.update(
+                    next_run_time=next_time.astimezone().strftime("%Y-%m-%d %H:%M"),
+                    schedule_status="scheduled",
+                )
+    except Exception as error:
+        logger.warning(f"[Reminder] 读取下次调度时间失败: {error}")
+        details["schedule_status"] = "unavailable"
+    return details
+
+
 class ReminderScheduler:
     """Register reminder jobs while leaving lifecycle ownership to the plugin."""
 
@@ -118,16 +149,20 @@ class ReminderScheduler:
         if repeat == "none":
             trigger = DateTrigger(run_date=trigger_time)
         elif repeat == "daily":
-            trigger = CronTrigger(hour=trigger_time.hour, minute=trigger_time.minute)
+            trigger = CronTrigger(hour=trigger_time.hour, minute=trigger_time.minute,
+                                  start_date=trigger_time)
         elif repeat == "weekly":
             trigger = CronTrigger(day_of_week=trigger_time.weekday(),
-                                  hour=trigger_time.hour, minute=trigger_time.minute)
+                                  hour=trigger_time.hour, minute=trigger_time.minute,
+                                  start_date=trigger_time)
         elif repeat == "monthly":
             trigger = CronTrigger(day=trigger_time.day,
-                                  hour=trigger_time.hour, minute=trigger_time.minute)
+                                  hour=trigger_time.hour, minute=trigger_time.minute,
+                                  start_date=trigger_time)
         elif repeat == "yearly":
             trigger = CronTrigger(month=trigger_time.month, day=trigger_time.day,
-                                  hour=trigger_time.hour, minute=trigger_time.minute)
+                                  hour=trigger_time.hour, minute=trigger_time.minute,
+                                  start_date=trigger_time)
         elif repeat == "interval":
             interval_minutes = reminder.get("interval_minutes", 30)
             now = get_local_now()

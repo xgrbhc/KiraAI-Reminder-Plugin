@@ -341,6 +341,14 @@ createApp({
             if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus({ preventScroll: true }) }
         }
 
+        const isRepeating = task => ['daily', 'weekly', 'monthly', 'yearly', 'interval'].includes(task?.repeat)
+        const formatNextRun = task => {
+            if (task?.paused) return t('schedulePaused')
+            if (task?.schedule_status === 'scheduled' && typeof task.next_run_time === 'string' && task.next_run_time.trim()) return task.next_run_time
+            const keys = { paused: 'schedulePaused', missing: 'scheduleMissing', unavailable: 'scheduleUnavailable', pending: 'schedulePending', unknown: 'scheduleUnknown' }
+            return t(keys[task?.schedule_status] || 'scheduleUnknown')
+        }
+
         const formatRepeat = (repeat, interval) => {
             const map = {
                 'none': '单次部署',
@@ -431,6 +439,7 @@ createApp({
             selectSession,
             activeCount, pausedCount, importantCount,
             fetchReminders, scanNetwork, scanning, doAction, reviewDelivery, formatRepeat,
+            isRepeating, formatNextRun,
             showConfirmModal, confirmMessage, deleteToken, closeModal, confirmDelete,
             pendingOperation, needsDeleteToken, confirmTitle, confirmButton, modalElement, trapModalFocus,
             mutationBusy, actionsDisabled, loadError, deliveryStatusKnown, startupError, hasCurrentSnapshot, t

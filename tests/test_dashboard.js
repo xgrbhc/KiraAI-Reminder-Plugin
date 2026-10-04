@@ -584,6 +584,35 @@ test('toast close button is wired with matching Chinese and English labels', asy
         Object.keys(h.scope.window.ReminderDashboardMessages.en).sort())
 })
 
+test('recurring labels distinguish registered next time from unavailable state', async () => {
+    const h = dashboard(); await h.load()
+    for (const repeat of ['daily', 'weekly', 'monthly', 'yearly', 'interval']) assert.equal(h.ui.isRepeating({ repeat }), true)
+    for (const repeat of ['none', '', undefined, 'unsupported']) assert.equal(h.ui.isRepeating({ repeat }), false)
+    assert.equal(h.ui.t('startTime'), '开始')
+    assert.equal(h.ui.t('nextTime'), '下次')
+    assert.equal(h.ui.formatNextRun({ schedule_status: 'scheduled', next_run_time: '2099-01-02 10:15' }), '2099-01-02 10:15')
+    for (const [state, label] of Object.entries({ paused: '已暂停', missing: '未调度', unavailable: '调度不可用', pending: '等待调度登记', unknown: '暂无下次时间' })) {
+        assert.equal(h.ui.formatNextRun({ schedule_status: state, time: '2099-01-01 10:15' }), label)
+    }
+    assert.equal(h.ui.formatNextRun({ paused: true, schedule_status: 'scheduled', next_run_time: 'stale' }), '已暂停')
+    for (const next_run_time of [null, 123, '', '   ']) assert.equal(h.ui.formatNextRun({ schedule_status: 'scheduled', next_run_time }), '暂无下次时间')
+    assert.equal(h.ui.formatNextRun({ time: 'old time' }), '暂无下次时间')
+    h.changeLocale('en')
+    assert.equal(h.ui.t('startTime'), 'Starts')
+    assert.equal(h.ui.t('nextTime'), 'Next')
+    for (const [state, label] of Object.entries({ paused: 'Paused', missing: 'Not scheduled', unavailable: 'Scheduler unavailable', pending: 'Waiting for scheduling', unknown: 'Next run unavailable' })) {
+        assert.equal(h.ui.formatNextRun({ schedule_status: state }), label)
+    }
+    h.unmount()
+})
+
+test('recurring template adds next time without changing one-time time display', () => {
+    const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8')
+    assert(html.includes("{{ isRepeating(task) ? t('startTime') + ': ' : '' }}{{ task.time }}"))
+    assert(html.includes('v-if="isRepeating(task)"'))
+    assert(html.includes("{{ t('nextTime') }}: {{ formatNextRun(task) }}"))
+})
+
 test('toast replacement does not retain outgoing notices in a transition group', () => {
     const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8')
     assert(!html.includes('<transition-group'))

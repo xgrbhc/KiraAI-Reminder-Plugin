@@ -150,7 +150,8 @@
                         </div>
                         <h3 class="content-wrap text-xl font-medium text-white mb-2" :class="{'line-through opacity-50': task.paused}">{{ task.content }}</h3>
                         <div class="text-sm text-gray-400 flex flex-wrap gap-x-6 gap-y-2 mt-2">
-                            <span class="min-w-0 max-w-full flex items-center gap-2"><i class="fa-regular fa-clock shrink-0"></i> <span class="min-w-0 content-wrap">{{ task.time }}</span></span>
+                            <span class="min-w-0 max-w-full flex items-center gap-2"><i class="fa-regular fa-clock shrink-0"></i> <span class="min-w-0 content-wrap">{{ isRepeating(task) ? t('startTime') + ': ' : '' }}{{ task.time }}</span></span>
+                            <span v-if="isRepeating(task)" class="min-w-0 max-w-full flex items-center gap-2"><i class="fa-regular fa-clock shrink-0"></i> <span class="min-w-0 content-wrap">{{ t('nextTime') }}: {{ formatNextRun(task) }}</span></span>
                             <span class="min-w-0 max-w-full flex items-center gap-2"><i class="fa-regular fa-user shrink-0"></i> <span class="min-w-0 content-wrap">{{ task.creator_name || '未知源' }} <span class="text-xs opacity-50">({{task.creator_id}})</span></span></span>
                             <span v-if="task.action" class="min-w-0 max-w-full flex items-center gap-2"><i class="fa-solid fa-bolt shrink-0 text-yellow-500"></i> <span class="min-w-0 content-wrap">{{ task.action }}</span></span>
                         </div>

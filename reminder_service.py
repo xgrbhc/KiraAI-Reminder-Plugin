@@ -13,6 +13,7 @@ from core.plugin import logger
 from .identity import PrincipalContext, PrincipalKind
 from .job_sync import reminder_job_commit
 from .permissions import ReminderOperation, can_manage_reminder
+from .scheduler import reminder_schedule_info
 from .storage import ReminderStorage
 from .time_utils import (
     determine_random_count,
@@ -232,7 +233,15 @@ class ReminderService:
                     idx, total = r.get("random_index"), r.get("random_total")
                     rand = (f"\n   范围: {tr.get('start','?')} ~ {tr.get('end','?')}"
                             f" [随机 {idx}/{total}]" if total else "")
-                lines.append(f"{i}. {r['content']}{cat}{imp}{paused}\n   时间: {r['time']}{rep}{rand}{action}"
+                schedule = reminder_schedule_info(self._get_scheduler() if self._get_scheduler else None, r)
+                if schedule:
+                    statuses = {"paused": "已暂停", "missing": "未调度", "unavailable": "调度不可用",
+                                "pending": "等待调度登记", "unknown": "暂无下次时间"}
+                    next_time = schedule["next_run_time"] or statuses.get(schedule["schedule_status"], "暂无下次时间")
+                    timing = f"开始: {r['time']}{rep}\n   下次: {next_time}"
+                else:
+                    timing = f"时间: {r['time']}{rep}"
+                lines.append(f"{i}. {r['content']}{cat}{imp}{paused}\n   {timing}{rand}{action}"
                              f"\n   job_id: {r.get('job_id','unknown')}"
                              f"\n   创建人: {r.get('creator_name','未知')}")
             self._cleanup_tokens()

@@ -55,13 +55,21 @@ for(let i=2;i<listSize;i++) state['Test:dm:alice'].reminders.push({
  job_id:'scroll-test-'+i,content:'隔离滚动测试 '+i,time:'2030-01-01 12:00',repeat:'none',creator_id:'alice',owner_id:'alice',creator_name:'Alice'
 });
 state['Test:dm:alice'].deliveries.push({delivery_id:'delivery1',job_id:'job1',status:'unconfirmed',reminder:{...state['Test:dm:alice'].reminders[0]}});
+if (preview.has('recurring')) {
+ state['Test:dm:alice'].reminders = [
+  {job_id:'daily',content:'隔离测试：每日提醒',time:'2030-01-01 10:00',repeat:'daily',next_run_time:'2030-01-02 10:00',schedule_status:'scheduled',creator_id:'alice',owner_id:'alice',creator_name:'Alice'},
+  {job_id:'paused',content:'隔离测试：暂停的每周提醒',time:'2030-01-01 11:00',repeat:'weekly',paused:true,next_run_time:null,schedule_status:'paused',creator_id:'alice',owner_id:'alice',creator_name:'Alice'},
+  {job_id:'missing',content:'隔离测试：未登记的每月提醒',time:'2030-01-31 12:00',repeat:'monthly',next_run_time:null,schedule_status:'missing',creator_id:'alice',owner_id:'alice',creator_name:'Alice'}
+ ];
+ state['Test:dm:alice'].deliveries = [];
+}
 const copy = value => JSON.parse(JSON.stringify(value));
 const ok = data => ({status:'ok',data});
 const error = msg => ({status:'error',msg});
 const tokens = new Map();
 let sessionReads = 0;
 window.PluginPageContext = {
- ready: async () => ({pluginId:'reminder_plugin',locale:'zh'}),
+ ready: async () => ({pluginId:'reminder_plugin',locale:preview.get('locale')==='en'?'en':'zh'}),
  onContext: () => () => {},
  api: {
   async get(endpoint) {

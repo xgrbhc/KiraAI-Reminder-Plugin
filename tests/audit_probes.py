@@ -1,9 +1,7 @@
-"""Explicit audit probes: safety checks and observations of remaining defects.
+"""Explicit audit probes: safety checks for previously observed defects.
 
 Run with: python -m pytest tests/audit_probes.py -q -s
-Some probes assert an observed defect to make its reproduction deterministic.
-Passing here means the observation was reproduced, not that the defect is fixed.
-R1-R6 probes now assert corrected behavior; remaining observations retain their meaning.
+The probes assert corrected behavior, including the recurring start-date boundary.
 This filename is excluded from pytest's normal test_* discovery.
 All state is temporary; scheduler and publish callbacks are in-memory fakes.
 """
@@ -132,7 +130,7 @@ def test_random_schedule_preserves_distinct_minute_slots(reminder_main, tmp_path
     asyncio.run(run())
 
 
-def test_observed_future_daily_start_date_is_not_used(reminder_main, tmp_path):
+def test_future_daily_start_date_is_respected(reminder_main, tmp_path):
     plugin, _, _ = make_plugin(reminder_main, tmp_path / "reminders.json")
     attach_delivery(plugin, reminder_main, tmp_path)
     plugin._scheduler = scheduler = FakeScheduler()
@@ -142,7 +140,7 @@ def test_observed_future_daily_start_date_is_not_used(reminder_main, tmp_path):
     trigger = scheduler.jobs[0][1]["trigger"]
     now = dt.datetime(2026, 10, 4, 0, 0, tzinfo=trigger.timezone)
     next_fire = trigger.get_next_fire_time(None, now)
-    assert next_fire.year == 2026
+    assert next_fire.strftime("%Y-%m-%d %H:%M") == "2099-01-01 10:00"
     observation("future_daily_start", requested_start="2099-01-01 10:00", next_fire=str(next_fire))
 
 

@@ -317,7 +317,8 @@ def test_list_reminders_preserves_visible_fields(reminder_main, tmp_path: Path):
         assert response == (
             "📋 可访问待办列表：\n\n"
             "1. test ⭐重要 ⏸️已暂停\n"
-            "   时间: 2026-10-01 08:30 [每天]\n"
+            "   开始: 2026-10-01 08:30 [每天]\n"
+            "   下次: 已暂停\n"
             "   job_id: job-1\n"
             "   创建人: Alice"
         )
