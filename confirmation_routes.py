@@ -91,10 +91,9 @@ class ConfirmationRoutes:
                     plugin._allowed_autonomy_sessions(),
                 ):
                     return "❌ 投递记录不可访问，请重新查询"
-                if params["decision"] not in {"retry", "dismiss", "defer"}:
+                if params["decision"] != "dismiss":
                     return "无效处理方式"
-                current = reminder_targets(await plugin._storage.load(), sid, {"job_id": entry["job_id"]})
-                targets = {"kind": "delivery", "entry": entry, "reminder": current}
+                targets = {"kind": "delivery", "entry": entry}
             if mixed or needs_confirmation or critical:
                 messages = event_messages(event)
                 context = inspect_user_message(event, messages[-1]) if messages else None
@@ -116,8 +115,6 @@ class ConfirmationRoutes:
                 plugin._allowed_autonomy_sessions(), params["decision"],
                 expected=targets,
             )
-            if entry and params["decision"] == "retry":
-                await plugin._fire_reminder(sid, entry["reminder"], delivery_id=entry["retry_delivery_id"])
             return message
         if operation == "list_delivery_issues":
             return await plugin._list_delivery_issues(event)

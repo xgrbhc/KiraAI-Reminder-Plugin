@@ -266,7 +266,7 @@ def test_reconcile_keeps_overdue_without_replaying_and_expires_awaiting(reminder
     asyncio.run(run())
 
 
-def test_recovery_scope_and_retry_rules(reminder_main, tmp_path: Path):
+def test_recovery_scope_and_ignore_only_rules(reminder_main, tmp_path: Path):
     async def run():
         plugin = _plugin(reminder_main, tmp_path)
         record = _record()
@@ -278,17 +278,15 @@ def test_recovery_scope_and_retry_rules(reminder_main, tmp_path: Path):
         assert len(await plugin._delivery.list_issues(SID, owner, [], [SID])) == 1
         assert await plugin._delivery.list_issues(SID, other, [], [SID]) == []
 
-        msg, old = await plugin._delivery.resolve(SID, delivery_id, owner, [], [SID], "retry")
-        assert old is not None and msg == "已记录处理决定"
-        state = (await plugin._delivery_storage.load())[SID]
-        assert [entry["status"] for entry in state] == ["resolved", "awaiting_llm"]
-        assert old["retry_delivery_id"] == state[1]["delivery_id"]
-
-        await plugin._delivery.mark(SID, state[1]["delivery_id"], "unconfirmed")
-        msg, result = await plugin._delivery.resolve(
-            SID, state[1]["delivery_id"], owner, [], [SID], "retry"
-        )
-        assert result is None and "不能自动重试" in msg
+        for decision in ("retry", "defer"):
+            msg, result = await plugin._delivery.resolve(SID, delivery_id, owner, [], [SID], decision)
+            assert result is None and "无效处理方式" in msg
+        original = plugin._storage.path.read_bytes()
+        msg, result = await plugin._delivery.resolve(SID, delivery_id, owner, [], [SID])
+        assert result is not None and msg == "已记录处理决定"
+        assert [entry["status"] for entry in (await plugin._delivery_storage.load())[SID]] == ["resolved"]
+        assert plugin._storage.path.read_bytes() == original
+        assert (await plugin._delivery.resolve(SID, delivery_id, owner, [], [SID]))[1] is None
 
     asyncio.run(run())
 
@@ -311,7 +309,9 @@ def test_autonomous_bot_gets_only_scoped_private_review(reminder_main, tmp_path:
         assert len(await plugin._delivery.list_issues(SID, bot, [], [SID])) == 1
         assert await plugin._delivery.list_issues(SID, bot, [], []) == []
         msg, result = await plugin._delivery.resolve(SID, delivery_id, bot, [], [SID], "retry")
-        assert result is None and "不能自动重试" in msg
+        assert result is None and "无效处理方式" in msg
+        assert (await plugin._delivery.resolve(SID, delivery_id, bot, [], [SID]))[1]
+        assert (await plugin._storage.load())[SID] == [record]
 
     asyncio.run(run())
 
@@ -348,7 +348,7 @@ def test_recovery_prompt_is_owner_scoped_and_skips_mixed_batch(reminder_main, tm
     asyncio.run(run())
 
 
-def test_web_review_of_uncertain_action_requires_manual_api_and_keeps_new_attempt(
+def test_web_review_of_uncertain_action_only_ignores_without_dispatch(
     reminder_main, tmp_path: Path
 ):
     async def run():
@@ -367,19 +367,21 @@ def test_web_review_of_uncertain_action_requires_manual_api_and_keeps_new_attemp
         assert response["status"] == "ok"
         assert response["data"][0]["status"] == "unconfirmed"
 
-        result = await plugin.api_review_delivery(
-            "retry", {"session_id": SID, "delivery_id": delivery_id}
-        )
+        for decision in ("retry", "defer"):
+            result = await plugin.api_review_delivery(decision, {"session_id": SID, "delivery_id": delivery_id})
+            assert result["status"] == "error"
+        original = plugin._storage.path.read_bytes()
+        result = await plugin.api_review_delivery("dismiss", {"session_id": SID, "delivery_id": delivery_id})
         assert result["status"] == "ok"
-        assert "等待模型确认" in result["msg"]
         state = (await plugin._delivery_storage.load())[SID]
-        assert [entry["status"] for entry in state] == ["resolved", "awaiting_llm"]
-        assert published == [(SID, record, state[1]["delivery_id"])]
+        assert [entry["status"] for entry in state] == ["resolved"]
+        assert published == []
+        assert plugin._storage.path.read_bytes() == original
 
     asyncio.run(run())
 
 
-def test_dismiss_cleanup_can_resume_after_interrupted_write(reminder_main, tmp_path: Path):
+def test_dismiss_never_cleans_original_even_after_reconcile(reminder_main, tmp_path: Path):
     async def run():
         plugin = _plugin(reminder_main, tmp_path)
         record = _record()
@@ -387,20 +389,16 @@ def test_dismiss_cleanup_can_resume_after_interrupted_write(reminder_main, tmp_p
         delivery_id = await plugin._delivery.begin(SID, record)
         await plugin._delivery.mark(SID, delivery_id, "failed")
         owner = plugin._get_principal(_event(plugin, reminder_main))
-        original_cleanup = plugin._delivery._cleanup_confirmed
-
         async def interrupted(_sid, _entry):
-            raise OSError("simulated interruption")
+            raise AssertionError("Ignoring must never clean the original reminder")
 
         plugin._delivery._cleanup_confirmed = interrupted
-        with pytest.raises(OSError):
-            await plugin._delivery.resolve(SID, delivery_id, owner, [], [SID], "dismiss")
+        await plugin._delivery.resolve(SID, delivery_id, owner, [], [SID], "dismiss")
         assert (await plugin._delivery_storage.load())[SID][0]["status"] == "resolved"
         assert (await plugin._storage.load())[SID] == [record]
 
-        plugin._delivery._cleanup_confirmed = original_cleanup
         await plugin._delivery.reconcile()
-        assert (await plugin._storage.load())[SID] == []
+        assert (await plugin._storage.load())[SID] == [record]
 
     asyncio.run(run())
 
@@ -526,8 +524,10 @@ def test_paused_reminder_cannot_be_retried(reminder_main, tmp_path: Path):
         message, result = await plugin._delivery.resolve(
             SID, delivery_id, owner, [], [SID], "retry"
         )
-        assert result is None and "已暂停" in message
+        assert result is None and "无效处理方式" in message
         assert (await plugin._delivery_storage.load())[SID][0]["status"] == "failed"
+        assert (await plugin._delivery.resolve(SID, delivery_id, owner, [], [SID]))[1]
+        assert (await plugin._storage.load())[SID] == [paused]
 
     asyncio.run(run())
 

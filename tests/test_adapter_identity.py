@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import datetime as dt
 import json
 from types import SimpleNamespace
 
@@ -233,7 +234,7 @@ def stores(reminder_main, tmp_path):
 
 
 @pytest.mark.parametrize("status", ["awaiting_llm", "failed"])
-def test_migrated_receipt_still_matches_for_confirmation_or_retry(status, reminder_main, tmp_path):
+def test_migrated_receipt_still_matches_for_confirmation_or_ignore(status, reminder_main, tmp_path):
     async def run():
         reminders, ledger = stores(reminder_main, tmp_path)
         sid = "QQ:dm:123"
@@ -251,13 +252,16 @@ def test_migrated_receipt_still_matches_for_confirmation_or_retry(status, remind
         assert current["owner_adapter_name"] == "QQ"
         tracker = reminder_main.DeliveryTracker(ledger, reminders)
         if status == "awaiting_llm":
+            async with ledger.modify() as state:
+                state[sid][0]["created_at"] = dt.datetime.now().isoformat()
             assert await tracker.begin(sid, current) is None
             await tracker.mark(sid, "d1", "llm_received")
             assert (await reminders.load())[sid] == []
         else:
-            result, entry = await tracker.resolve(sid, "d1", user(), [], [], "retry")
+            result, entry = await tracker.resolve(sid, "d1", user(), [], [], "dismiss")
             assert result == "已记录处理决定"
-            assert entry["retry_delivery_id"]
+            assert entry["resolution"] == "dismiss"
+            assert (await reminders.load())[sid] == [current]
         assert await migration.migrate_identity_stores(reminders, ledger) == 0
 
     asyncio.run(run())

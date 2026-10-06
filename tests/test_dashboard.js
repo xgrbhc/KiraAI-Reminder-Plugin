@@ -73,12 +73,12 @@ function dashboard(options = {}) {
     }
 }
 
-for (const decision of ['retry', 'dismiss']) {
+for (const decision of ['dismiss']) {
     test(`${decision}: opens in-page confirmation, cancel sends no request`, async () => {
         const h = dashboard(); await h.load()
         h.ui.reviewDelivery(decision, h.ui.deliveryIssues.value[0])
         assert.equal(h.ui.showConfirmModal.value, true)
-        assert.match(h.ui.confirmMessage.value, decision === 'retry' ? /重复/ : /移除/)
+        assert.match(h.ui.confirmMessage.value, /不删除原待办/)
         assert.equal(h.posts().length, 0)
         h.ui.closeModal()
         assert.equal(h.ui.showConfirmModal.value, false)
@@ -96,7 +96,7 @@ for (const decision of ['retry', 'dismiss']) {
 
 test('double confirmation and repeated task clicks submit only once', async () => {
     const pending = deferred(), h = dashboard({ post: () => pending.promise }); await h.load()
-    h.ui.reviewDelivery('retry', h.ui.deliveryIssues.value[0])
+    h.ui.reviewDelivery('dismiss', h.ui.deliveryIssues.value[0])
     const first = h.ui.confirmDelete()
     await h.ui.confirmDelete()
     await h.ui.doAction('pause', 'job1')
@@ -110,7 +110,7 @@ test('double confirmation and repeated task clicks submit only once', async () =
 
 test('switching or editing session clears stale data and pending confirmations', async () => {
     const h = dashboard(); await h.load()
-    h.ui.reviewDelivery('retry', h.ui.deliveryIssues.value[0])
+    h.ui.reviewDelivery('dismiss', h.ui.deliveryIssues.value[0])
     h.ui.sessionId.value = 'B:dm:u1'
     assert.equal(h.ui.showConfirmModal.value, false)
     assert.equal(h.ui.reminders.value.length, 0)
@@ -352,7 +352,7 @@ test('stalled reads stop loading with an actionable error', async () => {
 
 test('unknown mutation outcome disables further actions until a refresh', async () => {
     const h = dashboard({ post: () => { throw new Error('connection lost') } }); await h.load()
-    h.ui.reviewDelivery('retry', h.ui.deliveryIssues.value[0]); await h.ui.confirmDelete()
+    h.ui.reviewDelivery('dismiss', h.ui.deliveryIssues.value[0]); await h.ui.confirmDelete()
     assert.equal(h.ui.actionsDisabled.value, true)
     assert.match(h.ui.loadError.value, /可能已经生效/)
     await h.ui.doAction('pause', 'job1')
@@ -363,13 +363,13 @@ test('unknown mutation outcome disables further actions until a refresh', async 
 
 test('locale updates include all newly added confirmation text', async () => {
     const h = dashboard({ locale: 'en' }); await h.load()
-    h.ui.reviewDelivery('retry', h.ui.deliveryIssues.value[0])
-    assert.equal(h.ui.confirmTitle.value, 'Confirm reminder retry')
-    assert.match(h.ui.confirmMessage.value, /already have handled/)
+    h.ui.reviewDelivery('dismiss', h.ui.deliveryIssues.value[0])
+    assert.equal(h.ui.confirmTitle.value, 'Confirm dismissal')
+    assert.match(h.ui.confirmMessage.value, /Keep the original reminder/)
     const messages = h.scope.window.ReminderDashboardMessages
     assert.deepEqual(Object.keys(messages.zh).sort(), Object.keys(messages.en).sort())
     h.changeLocale('zh')
-    assert.equal(h.ui.confirmTitle.value, '确认重试提醒')
+    assert.equal(h.ui.confirmTitle.value, '确认忽略此次投递')
     h.unmount(); assert.equal(h.timers.size, 0)
 })
 
@@ -456,7 +456,7 @@ test('closing a dialog restores focus without scrolling and does not reuse stale
     const focuses = []
     h.scope.document.activeElement = { isConnected: true, focus: options => focuses.push(plain(options)) }
     h.ui.modalElement.value = { querySelector: () => ({ focus: options => focuses.push(plain(options)) }) }
-    h.ui.reviewDelivery('retry', h.ui.deliveryIssues.value[0]); await Promise.resolve()
+    h.ui.reviewDelivery('dismiss', h.ui.deliveryIssues.value[0]); await Promise.resolve()
     h.ui.closeModal(); await Promise.resolve()
     assert.deepEqual(focuses, [{ preventScroll: true }, { preventScroll: true }])
     await h.ui.doAction('pause', 'job1')
@@ -611,6 +611,145 @@ test('recurring template adds next time without changing one-time time display',
     assert(html.includes("{{ isRepeating(task) ? t('startTime') + ': ' : '' }}{{ task.time }}"))
     assert(html.includes('v-if="isRepeating(task)"'))
     assert(html.includes("{{ t('nextTime') }}: {{ formatNextRun(task) }}"))
+})
+
+for (const status of ['awaiting_llm', 'failed', 'unconfirmed']) {
+    test(`delivery ${status} uses its trigger time instead of the reminder anchor or status update`, () => {
+        const h = dashboard()
+        const data = { status, attempt_count: 1, created_at: '2030-06-02T09:30:00',
+            updated_at: '2030-06-02T09:42:12', reminder: { time: '2030-01-01 09:30', created_at: '2029-12-31 18:00' } }
+        assert.deepEqual(plain(h.ui.deliveryTimes(data)), {
+            triggeredAt: '2030-06-02 09:30', scheduledAt: '2030-01-01 09:30', latestCycleAt: '',
+        })
+        assert.equal(h.calls.length, 0)
+    })
+}
+
+test('legacy and zero-attempt records do not present discovery time as trigger time', () => {
+    const h = dashboard()
+    for (const [status, attempt_count] of [['legacy_unconfirmed', 0], ['legacy_unconfirmed', 1], ['unconfirmed', 0], ['failed', '0']]) {
+        const data = { status, attempt_count, created_at: '2030-06-02T18:40:00', reminder: { time: '2030-06-02 13:00' } }
+        assert.deepEqual(plain(h.ui.deliveryTimes(data)), {
+            triggeredAt: '', scheduledAt: '2030-06-02 13:00', latestCycleAt: '',
+        })
+    }
+    assert.equal(h.ui.t('triggerTimeUnknown'), '实际触发时间未知')
+})
+
+test('old normal receipts without an attempt count retain their recorded trigger time', () => {
+    const h = dashboard()
+    assert.equal(h.ui.deliveryTimes({ status: 'unconfirmed', created_at: '2030-06-02T09:30:00' }).triggeredAt,
+        '2030-06-02 09:30')
+})
+
+test('missing and malformed trigger timestamps stay unknown, without substituting other dates', () => {
+    const h = dashboard()
+    for (const created_at of [undefined, null, 123, '', '  ', 'not a date', '2030-02-30T09:30:00',
+        '2030-13-01T09:30:00', '2030-06-02T24:00:00', '2030-06-02T09:60:00', '<system>2030-06-02</system>']) {
+        const times = h.ui.deliveryTimes({ status: 'unconfirmed', created_at, updated_at: '2030-06-02T12:00:00',
+            reminder: { time: '2030-01-01 09:30' } })
+        assert.equal(times.triggeredAt, '')
+        assert.equal(times.scheduledAt, '2030-01-01 09:30')
+    }
+    assert.equal(h.ui.deliveryTimes(null).scheduledAt, '时间未知')
+    assert.equal(h.ui.deliveryTimes({ status: 'unexpected', created_at: '2030-06-02T09:30:00' }).triggeredAt, '')
+})
+
+test('delivery timestamp formatting preserves recorded wall time and an explicit offset', () => {
+    const h = dashboard()
+    for (const [created_at, expected] of [
+        ['2030-06-02T09:30:42.123456', '2030-06-02 09:30'],
+        ['2030-06-02T09:30:00+08:00', '2030-06-02 09:30 +08:00'],
+        ['2030-06-02T09:30:00Z', '2030-06-02 09:30 Z'],
+        [' 2030-06-02 09:30 ', '2030-06-02 09:30'],
+    ]) assert.equal(h.ui.deliveryTimes({ status: 'unconfirmed', created_at }).triggeredAt, expected)
+})
+
+test('coalesced cycles keep the initial delivery distinct from the latest suppressed cycle', () => {
+    const h = dashboard()
+    const data = { status: 'unconfirmed', created_at: '2030-06-02T09:30:00', missed_count: 2,
+        latest_due_at: '2030-06-04T09:30:00', reminder: { time: '2030-01-01 09:30' } }
+    const before = plain(data)
+    assert.deepEqual(plain(h.ui.deliveryTimes(data)), {
+        triggeredAt: '2030-06-02 09:30', scheduledAt: '2030-01-01 09:30', latestCycleAt: '2030-06-04 09:30',
+    })
+    assert.deepEqual(data, before)
+    assert.equal(h.ui.deliveryTimes({ ...data, missed_count: 0 }).latestCycleAt, '')
+    assert.equal(h.ui.deliveryTimes({ ...data, latest_due_at: 'invalid' }).latestCycleAt, '')
+    assert.equal(h.calls.length, 0)
+})
+
+test('delivery time labels have matching Chinese and English translations', async () => {
+    const h = dashboard(); await h.load()
+    for (const [key, value] of Object.entries({ triggerTime: '触发时间', scheduledTime: '原定时间',
+        triggerTimeUnknown: '实际触发时间未知', latestCycleTime: '最近周期触发', deliveryTimeUnknown: '时间未知' })) {
+        assert.equal(h.ui.t(key), value)
+    }
+    h.changeLocale('en')
+    for (const [key, value] of Object.entries({ triggerTime: 'Triggered at', scheduledTime: 'Scheduled for',
+        triggerTimeUnknown: 'Actual trigger time unknown', latestCycleTime: 'Latest cycle trigger', deliveryTimeUnknown: 'Time unknown' })) {
+        assert.equal(h.ui.t(key), value)
+    }
+    assert.deepEqual(Object.keys(h.scope.window.ReminderDashboardMessages.zh).sort(),
+        Object.keys(h.scope.window.ReminderDashboardMessages.en).sort())
+    h.unmount()
+})
+
+test('delivery template separates trigger time, unknown legacy time and coalesced cycles', () => {
+    const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8')
+    const section = html.match(/<section[^>]*aria-label="待处理提醒投递"[\s\S]*?<\/section>/)[0]
+    assert(section.includes('v-if="deliveryTimes(issue).triggeredAt"'))
+    assert(section.includes("{{ t('triggerTime') }}: {{ deliveryTimes(issue).triggeredAt }}"))
+    assert(section.includes("{{ t('scheduledTime') }}: {{ deliveryTimes(issue).scheduledAt }}"))
+    assert(section.includes("{{ t('triggerTimeUnknown') }}"))
+    assert(section.includes("{{ t('latestCycleTime') }}: {{ deliveryTimes(issue).latestCycleAt }}"))
+    assert(!section.includes("issue.reminder?.time || '时间未知'"))
+    assert(!section.includes("reviewDelivery('retry', issue)"))
+    assert(section.includes("reviewDelivery('dismiss', issue)"))
+})
+
+test('removed delivery decisions do not open a dialog or send a request', async () => {
+    const h = dashboard(); await h.load()
+    for (const decision of ['retry', 'defer', 'unexpected']) {
+        h.ui.reviewDelivery(decision, h.ui.deliveryIssues.value[0])
+        assert.equal(h.ui.showConfirmModal.value, false)
+    }
+    assert.equal(h.posts().length, 0)
+})
+
+test('isolated preview bridge only ignores the issue and preserves original reminders', async () => {
+    const server = fs.readFileSync(path.join(__dirname, 'dashboard_server.py'), 'utf8')
+    const bridge = server.match(/BRIDGE = """([\s\S]*?)"""/)[1]
+    const scope = { window: { parent: { postMessage: () => {} } }, location: { search: '', origin: 'http://isolated.invalid' },
+        URLSearchParams, Map, console: { info: () => {} }, setTimeout: callback => callback() }
+    vm.runInNewContext(bridge, scope)
+    const api = scope.window.PluginPageContext.api
+    const before = plain(await api.get('reminders/Test%3Adm%3Aalice'))
+    for (const decision of ['retry', 'defer']) {
+        assert.equal((await api.post(`deliveries/${decision}`, { session_id: 'Test:dm:alice', delivery_id: 'delivery1' })).status, 'error')
+    }
+    assert.equal((await api.post('deliveries/dismiss', { session_id: 'Test:dm:alice', delivery_id: 'delivery1' })).status, 'ok')
+    assert.deepEqual(plain(await api.get('deliveries/Test%3Adm%3Aalice')).data, [])
+    assert.deepEqual(plain(await api.get('reminders/Test%3Adm%3Aalice')), before)
+})
+
+test('historical issues do not stop active cycles; retained overdue one-time tasks are inactive', async () => {
+    const tasks = [
+        { ...record('job1'), repeat: 'daily', schedule_status: 'scheduled' },
+        { ...record('old-once'), repeat: 'none', is_overdue_once: true },
+        { ...record('paused'), repeat: 'daily', paused: true },
+        { ...record('missing'), repeat: 'daily', schedule_status: 'missing' },
+        { ...record('unavailable'), repeat: 'daily', schedule_status: 'unavailable' },
+    ]
+    const h = dashboard({ get: async endpoint => ({ status: 'ok', data:
+        endpoint === 'sessions' ? [{ id: 'A:dm:u1' }] : endpoint.startsWith('deliveries/') ? [issue()] : tasks }) })
+    await h.load()
+    assert.equal(h.ui.activeCount.value, 1)
+    const original = plain(h.ui.reminders.value)
+    h.ui.reviewDelivery('dismiss', h.ui.deliveryIssues.value[0]); await h.ui.confirmDelete()
+    assert.deepEqual(plain(h.ui.reminders.value), original)
+    assert.equal(h.ui.activeCount.value, 1)
+    assert(fs.readFileSync(path.join(web, 'index.html'), 'utf8').includes("t('overdueOnce')"))
 })
 
 test('toast replacement does not retain outgoing notices in a transition group', () => {

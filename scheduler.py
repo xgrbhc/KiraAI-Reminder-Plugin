@@ -26,8 +26,14 @@ _FIRE_RETRY_DELAY = 5
 
 
 def reminder_schedule_info(scheduler: Any, reminder: dict) -> dict:
-    """Read a recurring job's live schedule without changing its stored record."""
+    """Derive live schedule and overdue display flags without changing storage."""
     if reminder.get("repeat", "none") not in {"daily", "weekly", "monthly", "yearly", "interval"}:
+        if reminder.get("repeat", "none") == "none":
+            try:
+                if parse_time_string(reminder["time"]) <= get_local_now():
+                    return {"is_overdue_once": True}
+            except (KeyError, TypeError, ValueError):
+                pass
         return {}
     details = {"next_run_time": None, "schedule_status": "unknown"}
     if reminder.get("paused"):
@@ -124,7 +130,7 @@ class ReminderScheduler:
                             kept.append(r)
                             restored += 1
                         else:
-                            # Recovery owns overdue one-time records until review.
+                            # Keep overdue one-time records; ignoring issues never deletes them.
                             kept.append(r)
                             overdue += 1
                     except Exception as e:

@@ -234,7 +234,8 @@ class ReminderService:
                     rand = (f"\n   范围: {tr.get('start','?')} ~ {tr.get('end','?')}"
                             f" [随机 {idx}/{total}]" if total else "")
                 schedule = reminder_schedule_info(self._get_scheduler() if self._get_scheduler else None, r)
-                if schedule:
+                # One-time display flags are not recurring schedule metadata.
+                if "schedule_status" in schedule:
                     statuses = {"paused": "已暂停", "missing": "未调度", "unavailable": "调度不可用",
                                 "pending": "等待调度登记", "unknown": "暂无下次时间"}
                     next_time = schedule["next_run_time"] or statuses.get(schedule["schedule_status"], "暂无下次时间")

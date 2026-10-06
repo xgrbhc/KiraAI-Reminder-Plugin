@@ -202,26 +202,27 @@ def test_duplicates_limits_and_concurrent_consumption(plugin, monkeypatch):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("decision", ["retry", "dismiss", "defer"])
-def test_delivery_confirmation_keeps_sensitive_record_web_only(plugin, decision):
+def test_delivery_confirmation_can_ignore_uncertain_record_without_changing_original(plugin):
     async def run():
         event, record = await create(plugin)
         delivery_id = await plugin._delivery.begin(event.sid, record)
         await plugin._delivery.mark(event.sid, delivery_id, "unconfirmed")
-        key, _ = await request(plugin, "review_delivery_issue", {"delivery_id": delivery_id, "decision": decision})
+        original = await plugin._storage.load()
+        key, _ = await request(plugin, "review_delivery_issue", {"delivery_id": delivery_id})
         approved = await observe(plugin, message(text="确认"))
         result = await plugin.confirm_reminder_request(approved, key)
-        assert {"retry": "重试", "dismiss": "WebUI", "defer": "已延后"}[decision] in result
-        assert (await plugin._storage.load())[event.sid]
+        assert "已记录" in result
+        assert await plugin._storage.load() == original
+        assert (await plugin._delivery_storage.load())[event.sid][0]["status"] == "resolved"
     asyncio.run(run())
 
 
-def test_changed_delivery_refuses_confirmed_retry(plugin):
+def test_changed_delivery_refuses_confirmed_ignore(plugin):
     async def run():
         event, record = await create(plugin)
         delivery_id = await plugin._delivery.begin(event.sid, record)
         await plugin._delivery.mark(event.sid, delivery_id, "failed")
-        key, _ = await request(plugin, "review_delivery_issue", {"delivery_id": delivery_id, "decision": "retry"})
+        key, _ = await request(plugin, "review_delivery_issue", {"delivery_id": delivery_id, "decision": "dismiss"})
         await plugin._delivery.mark(event.sid, delivery_id, "unconfirmed")
         approved = await observe(plugin, message(text="确认"))
         assert "已变化" in await plugin.confirm_reminder_request(approved, key)
@@ -229,7 +230,21 @@ def test_changed_delivery_refuses_confirmed_retry(plugin):
     asyncio.run(run())
 
 
-def test_failed_safe_delivery_can_retry_once_after_confirmation(plugin):
+@pytest.mark.parametrize("decision", ["retry", "defer"])
+def test_removed_delivery_decisions_do_not_create_group_confirmation(plugin, decision):
+    async def run():
+        event, record = await create(plugin)
+        key = await plugin._delivery.begin(event.sid, record)
+        await plugin._delivery.mark(event.sid, key, "failed")
+        mixed = batch(message(), message("bob"))
+        ref = json.loads(await plugin.list_message_sources(mixed))["sources"][0]["source_ref"]
+        assert "无效处理方式" in await plugin.review_delivery_issue(mixed, key, decision, source_ref=ref)
+        assert json.loads(await plugin.list_pending_reminder_requests(mixed)) == []
+        assert (await plugin._delivery_storage.load())[event.sid][0]["status"] == "failed"
+    asyncio.run(run())
+
+
+def test_failed_delivery_can_ignore_once_after_confirmation_without_firing(plugin):
     async def run():
         event, record = await create(plugin)
         delivery_id = await plugin._delivery.begin(event.sid, record)
@@ -238,11 +253,11 @@ def test_failed_safe_delivery_can_retry_once_after_confirmation(plugin):
         async def fire(*args, **kwargs):
             fired.append(kwargs["delivery_id"])
         plugin._fire_reminder = fire
-        key, _ = await request(plugin, "review_delivery_issue", {"delivery_id": delivery_id, "decision": "retry"})
+        key, _ = await request(plugin, "review_delivery_issue", {"delivery_id": delivery_id, "decision": "dismiss"})
         approved = await observe(plugin, message(text="确认"))
         assert "已记录" in await plugin.confirm_reminder_request(approved, key)
         assert "确认未完成" in await plugin.confirm_reminder_request(approved, key)
-        assert len(fired) == 1
+        assert fired == []
     asyncio.run(run())
 
 

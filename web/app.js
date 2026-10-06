@@ -76,7 +76,8 @@ createApp({
         // Counts reflect the filtered view.
         const pendingJobIds = computed(() => new Set(deliveryIssues.value.map(issue => issue.job_id)))
         const activeCount = computed(() => deliveryStatusKnown.value
-            ? filteredReminders.value.filter(r => !r.paused && !pendingJobIds.value.has(r.job_id)).length : null)
+            ? filteredReminders.value.filter(r => !r.paused && !r.is_overdue_once
+                && !['missing', 'unavailable'].includes(r.schedule_status)).length : null)
         const pausedCount = computed(() => filteredReminders.value.filter(r => r.paused).length)
         const importantCount = computed(() => filteredReminders.value.filter(r => r.important).length)
 
@@ -241,7 +242,7 @@ createApp({
         const reviewDelivery = (decision, issue) => {
             if (actionsDisabled.value) return
             const current = deliveryIssues.value.find(item => item.delivery_id === issue?.delivery_id)
-            if (!['retry', 'dismiss'].includes(decision) || !current || !current.delivery_id
+            if (decision !== 'dismiss' || !current || !current.delivery_id
                 || current.status === 'awaiting_llm') {
                 return showToast(t('operationFailed'), t('invalidTarget'), 'error')
             }
@@ -341,6 +342,26 @@ createApp({
             if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus({ preventScroll: true }) }
         }
 
+        const formatDeliveryTimestamp = value => {
+            if (typeof value !== 'string') return ''
+            const match = value.trim().match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::[0-5]\d(?:\.\d+)?)?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$/)
+            if (!match) return ''
+            // Validate without converting the recorded wall time to browser time.
+            const minute = `${match[1]}T${match[2]}`
+            const probe = new Date(`${minute}:00Z`)
+            if (!Number.isFinite(probe.getTime()) || probe.toISOString().slice(0, 16) !== minute) return ''
+            return `${match[1]} ${match[2]}${match[3] ? ` ${match[3]}` : ''}`
+        }
+        const deliveryTimes = issue => {
+            const hasAttempt = ['awaiting_llm', 'failed', 'unconfirmed'].includes(issue?.status)
+                && !(issue?.attempt_count != null && Number(issue.attempt_count) === 0)
+            return {
+                triggeredAt: hasAttempt ? formatDeliveryTimestamp(issue?.created_at) : '',
+                scheduledAt: formatDeliveryTimestamp(issue?.reminder?.time) || t('deliveryTimeUnknown'),
+                latestCycleAt: Number(issue?.missed_count) > 0
+                    ? formatDeliveryTimestamp(issue?.latest_due_at) : '',
+            }
+        }
         const isRepeating = task => ['daily', 'weekly', 'monthly', 'yearly', 'interval'].includes(task?.repeat)
         const formatNextRun = task => {
             if (task?.paused) return t('schedulePaused')
@@ -439,7 +460,7 @@ createApp({
             selectSession,
             activeCount, pausedCount, importantCount,
             fetchReminders, scanNetwork, scanning, doAction, reviewDelivery, formatRepeat,
-            isRepeating, formatNextRun,
+            isRepeating, formatNextRun, deliveryTimes,
             showConfirmModal, confirmMessage, deleteToken, closeModal, confirmDelete,
             pendingOperation, needsDeleteToken, confirmTitle, confirmButton, modalElement, trapModalFocus,
             mutationBusy, actionsDisabled, loadError, deliveryStatusKnown, startupError, hasCurrentSnapshot, t

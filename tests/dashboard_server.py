@@ -63,6 +63,15 @@ if (preview.has('recurring')) {
  ];
  state['Test:dm:alice'].deliveries = [];
 }
+if (preview.has('delivery_times')) {
+ const r = {...state['Test:dm:alice'].reminders[0],time:'2030-01-01 09:30',repeat:'daily'};
+ state['Test:dm:alice'].reminders[0] = r;
+ state['Test:dm:alice'].deliveries = [
+  {delivery_id:'time-normal',job_id:r.job_id,status:'unconfirmed',created_at:'2030-06-02T09:30:00',updated_at:'2030-06-02T09:42:12',attempt_count:1,reminder:{...r}},
+  {delivery_id:'time-legacy',job_id:r.job_id,status:'legacy_unconfirmed',created_at:'2030-06-02T18:40:00',attempt_count:0,reminder:{...r,time:'2030-06-02 13:00',repeat:'none'}},
+  {delivery_id:'time-coalesced',job_id:r.job_id,status:'unconfirmed',created_at:'2030-06-02T09:30:00',missed_count:2,latest_due_at:'2030-06-04T09:30:00',attempt_count:1,reminder:{...r}}
+ ];
+}
 const copy = value => JSON.parse(JSON.stringify(value));
 const ok = data => ({status:'ok',data});
 const error = msg => ({status:'error',msg});
@@ -96,9 +105,8 @@ window.PluginPageContext = {
    if(endpoint.startsWith('deliveries/')) {
     const d=s.deliveries.find(d=>d.delivery_id===payload.delivery_id);
     if(!d) return error('Test delivery not found');
-    if(action==='retry') d.status='awaiting_llm';
-    else if(action==='dismiss') {s.deliveries=s.deliveries.filter(item=>item!==d);s.reminders=s.reminders.filter(r=>r.job_id!==d.job_id);}
-    else return error('Invalid test decision');
+    if(action==='dismiss') s.deliveries=s.deliveries.filter(item=>item!==d);
+    else return error('Only dismiss is supported');
    } else if(action==='confirm-delete') {
     const key=payload.session_id+':'+payload.confirm_token;
     const job=tokens.get(key);if(!job) return error('令牌无效或已过期');
