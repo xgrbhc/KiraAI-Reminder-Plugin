@@ -181,7 +181,7 @@ createApp({
                 displayedSessionId.value = ''
                 reminders.value = [] // Clear stale results on invalid input.
                 deliveryIssues.value = []
-                return showToast('参数校验失败', '必须提供目标频率基站 (Session ID)', 'error')
+                return showToast(t('validationFailed'), t('enterSession'), 'error')
             }
             if (sessionId.value !== sid) sessionId.value = sid
             const sequence = ++requestSequence
@@ -327,7 +327,7 @@ createApp({
                 })
             }
             if (!deleteToken.value.trim()) {
-                return showToast('校验失败', '请输入防御解除令牌', 'warning')
+                return showToast(t('validationFailed'), t('token'), 'warning')
             }
             await runMutation('reminders/confirm-delete', {
                 session_id: operation.sid, confirm_token: deleteToken.value.trim(),
@@ -372,14 +372,14 @@ createApp({
 
         const formatRepeat = (repeat, interval) => {
             const map = {
-                'none': '单次部署',
-                'daily': '每日战术循环',
-                'weekly': '周常矩阵',
-                'monthly': '月度计划',
-                'yearly': '年度方针',
-                'interval': `高频轮询 ${interval || 0}m`
+                'none': t('repeatOnce'),
+                'daily': t('repeatDaily'),
+                'weekly': t('repeatWeekly'),
+                'monthly': t('repeatMonthly'),
+                'yearly': t('repeatYearly'),
+                'interval': `${t('repeatEvery')} ${interval || 0} ${t('minutes')}`
             }
-            return map[repeat] || '单次部署'
+            return map[repeat] || t('repeatOnce')
         }
 
         const fetchSessions = async () => {

@@ -19,7 +19,7 @@
                 <h1 class="text-4xl md:text-5xl font-bold mb-2 tracking-tight">
                     KiraAI <span class="text-gradient">Reminders</span>
                 </h1>
-                <p class="text-gray-400 text-sm md:text-base opacity-80">智能多维日程调度中枢</p>
+                <p class="text-gray-400 text-sm md:text-base opacity-80">{{ t('dashboardIntro') }}</p>
             </div>
             
             <div class="mt-6 xl:mt-0 min-w-0 flex flex-wrap gap-4 relative z-40">
@@ -27,18 +27,18 @@
                 <div id="session-select-container" class="relative min-w-0 w-full sm:w-auto max-w-full">
                     <div class="glass-panel px-4 py-3 flex items-center gap-3 relative z-40 hover:bg-white/5 transition-colors focus-within:ring-2 focus-within:ring-indigo-500/50 cursor-text shadow-lg">
                         <i class="fa-solid fa-layer-group shrink-0 transition-colors" :class="sessionId ? 'text-indigo-400' : 'text-gray-500'"></i>
-                        <input v-model="sessionId" :disabled="mutationBusy" @focus="showSessionDropdown = true" @blur="showSessionDropdown = false" type="text" aria-label="Session ID" placeholder="Session ID (群号/会话标志)" class="bg-transparent border-none text-sm text-gray-200 focus:outline-none min-w-0 flex-1 w-full sm:w-64 placeholder-gray-500 font-medium" @keyup.enter="scanNetwork">
-                        <button type="button" :disabled="mutationBusy" aria-label="选择会话" class="shrink-0" @pointerdown.prevent @click="showSessionDropdown = !showSessionDropdown"><i class="fa-solid fa-chevron-down text-xs text-gray-500 transition-transform hover:text-white" :class="{'rotate-180': showSessionDropdown}"></i></button>
+                        <input v-model="sessionId" :disabled="mutationBusy" @focus="showSessionDropdown = true" @blur="showSessionDropdown = false" type="text" aria-label="Session ID" :placeholder="t('sessionPlaceholder')" class="bg-transparent border-none text-sm text-gray-200 focus:outline-none min-w-0 flex-1 w-full sm:w-64 placeholder-gray-500 font-medium" @keyup.enter="scanNetwork">
+                        <button type="button" :disabled="mutationBusy" :aria-label="t('selectSession')" class="shrink-0" @pointerdown.prevent @click="showSessionDropdown = !showSessionDropdown"><i class="fa-solid fa-chevron-down text-xs text-gray-500 transition-transform hover:text-white" :class="{'rotate-180': showSessionDropdown}"></i></button>
                     </div>
                     
                     <transition name="fade">
                         <div v-show="showSessionDropdown" class="absolute top-full left-0 mt-3 w-full sm:w-80 max-w-full bg-[#12121a]/95 backdrop-blur-2xl border border-indigo-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.7)] z-40 max-h-80 overflow-y-auto custom-scrollbar rounded-xl">
-                            <div v-if="availableSessions.length === 0" class="p-5 text-center text-sm text-gray-400 font-medium">基站扫描中或无存量活跃数据...</div>
+                            <div v-if="availableSessions.length === 0" class="p-5 text-center text-sm text-gray-400 font-medium">{{ t('noSessions') }}</div>
                             <div v-else>
                                 <button type="button" v-for="s in filteredSessions" :key="s.id" :disabled="mutationBusy" @pointerdown.prevent @click="selectSession(s)" class="w-full text-left p-4 hover:bg-indigo-500/20 cursor-pointer transition-all border-b border-white/5 last:border-0 flex justify-between items-center group">
                                     <div class="min-w-0 flex flex-col overflow-hidden">
                                         <span class="text-sm font-bold text-gray-200 group-hover:text-indigo-300 truncate">{{ s.id }}</span>
-                                        <span class="text-xs text-indigo-200/50 mt-1 font-medium">{{ s.count }} 个活动线程检测到</span>
+                                        <span class="text-xs text-indigo-200/50 mt-1 font-medium">{{ s.count }} {{ t('reminderCount') }}</span>
                                     </div>
                                     <i class="fa-solid fa-arrow-right shrink-0 text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-2 group-hover:translate-x-0 duration-300"></i>
                                 </button>
@@ -48,7 +48,7 @@
                 </div>
 
                 <button :disabled="mutationBusy || loading || scanning" @click="scanNetwork" class="glass-panel w-full sm:w-auto shrink-0 px-6 py-3 hover:bg-white/10 transition-all hover:scale-105 active:scale-95 text-sm font-bold flex items-center justify-center gap-2 relative z-40 shadow-lg text-white">
-                    <i class="fa-solid fa-satellite-dish" :class="{'animate-pulse text-indigo-400': loading || scanning}"></i> 扫描网络
+                    <i class="fa-solid fa-satellite-dish" :class="{'animate-pulse text-indigo-400': loading || scanning}"></i> {{ t('refreshData') }}
                 </button>
             </div>
         </header>
@@ -60,7 +60,7 @@
         <!-- Dynamic User Tree (Admin View) -->
         <div v-if="currentSessionUsers.length > 0" class="mb-8 animate-fade-in" style="animation-delay: 0.05s">
             <h3 class="text-sm font-semibold text-gray-400 mb-3 tracking-widest uppercase flex items-center gap-2">
-                <i class="fa-solid fa-network-wired text-indigo-500"></i> 数据源终端节点
+                <i class="fa-solid fa-network-wired text-indigo-500"></i> {{ t('filterOwner') }}
             </h3>
             <div class="flex flex-wrap gap-2">
                 <button @click="selectedUserId = null" class="px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 border" :class="selectedUserId === null ? 'bg-indigo-500 text-white border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'">
@@ -83,17 +83,17 @@
             <div class="glass-panel p-4 sm:p-6 flex flex-col justify-center items-center relative overflow-hidden group">
                 <div class="absolute inset-0 bg-gradient-to-br from-green-500/10 to-emerald-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                 <div class="text-4xl font-bold mb-1 text-green-400">{{ activeCount ?? '—' }}</div>
-                <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">活路中枢</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">{{ t('active') }}</div>
             </div>
             <div class="glass-panel p-4 sm:p-6 flex flex-col justify-center items-center relative overflow-hidden group">
                 <div class="absolute inset-0 bg-gradient-to-br from-yellow-500/10 to-orange-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                 <div class="text-4xl font-bold mb-1 text-yellow-400">{{ importantCount }}</div>
-                <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">重要警戒</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">{{ t('important') }}</div>
             </div>
             <div class="glass-panel p-4 sm:p-6 flex flex-col justify-center items-center relative overflow-hidden group">
                 <div class="absolute inset-0 bg-gradient-to-br from-gray-500/10 to-slate-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                 <div class="text-4xl font-bold mb-1 text-gray-400">{{ pausedCount }}</div>
-                <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">已挂起</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wider font-semibold">{{ t('schedulePaused') }}</div>
             </div>
         </div>
 
@@ -124,7 +124,7 @@
         <!-- Task List -->
         <div :aria-busy="loading" class="glass-panel p-4 sm:p-8 animate-fade-in" style="animation-delay: 0.2s">
             <h2 class="text-2xl font-semibold mb-6 flex items-center gap-3">
-                <i class="fa-solid fa-list-check text-indigo-400"></i> 行动清单
+                <i class="fa-solid fa-list-check text-indigo-400"></i> {{ t('taskList') }}
             </h2>
 
             <div v-if="loading && !hasCurrentSnapshot" class="text-center py-24">
@@ -135,13 +135,13 @@
             <p v-else-if="loadError || startupError" class="text-center py-12 text-gray-300">{{ t('unavailable') }}</p>
             <div v-else-if="reminders.length === 0" class="text-center py-24 opacity-60">
                 <i class="fa-solid fa-satellite fa-bounce text-6xl mb-6 text-gray-600" style="--fa-animation-duration: 3s;"></i>
-                <p class="text-xl">当前侦测频段下属无活动数据</p>
-                <p class="text-sm mt-2 text-gray-400">尝试更换 Session ID 或请确保插件权限正确</p>
+                <p class="text-xl">{{ t('emptySession') }}</p>
+                <p class="text-sm mt-2 text-gray-400">{{ t('emptyHelp') }}</p>
             </div>
             
             <div v-else-if="filteredReminders.length === 0" class="text-center py-16 opacity-80">
                 <i class="fa-solid fa-user-astronaut text-4xl mb-4 text-indigo-400"></i>
-                <p class="text-lg text-gray-300">该终端节点名下暂无待办事项</p>
+                <p class="text-lg text-gray-300">{{ t('emptyOwner') }}</p>
             </div>
 
             <div v-else class="space-y-4">
@@ -152,7 +152,7 @@
                             <span v-if="task.important" class="shrink-0 text-yellow-400 text-sm" title="重要提醒"><i class="fa-solid fa-star"></i></span>
                             <span class="max-w-full content-wrap text-xs px-3 py-1 rounded-full bg-white/10 text-gray-200 backdrop-blur-md uppercase tracking-wide">{{ formatRepeat(task.repeat, task.interval_minutes) }}</span>
                             <span v-if="task.category" class="min-w-0 max-w-full content-wrap text-xs px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">{{ task.category }}</span>
-                            <span v-if="task.paused" class="text-xs px-3 py-1 rounded-full bg-gray-500/40 text-gray-300">挂起中</span>
+                            <span v-if="task.paused" class="text-xs px-3 py-1 rounded-full bg-gray-500/40 text-gray-300">{{ t('schedulePaused') }}</span>
                             <span v-if="task.is_overdue_once" class="text-xs px-3 py-1 rounded-full bg-gray-500/40 text-gray-300">{{ t('overdueOnce') }}</span>
                             <span v-if="pendingJobIds.has(task.job_id)" class="text-xs px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-200">待确认投递</span>
                         </div>
@@ -173,7 +173,7 @@
                             <i class="fa-solid fa-play"></i>
                         </button>
                         
-                        <button :disabled="actionsDisabled" @click="doAction('delete', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-400 flex justify-center items-center transition-all hover:scale-110" title="抹除任务">
+                        <button :disabled="actionsDisabled" @click="doAction('delete', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-400 flex justify-center items-center transition-all hover:scale-110" :title="t('deleteTitle')">
                             <i class="fa-solid fa-trash-can"></i>
                         </button>
                     </div>

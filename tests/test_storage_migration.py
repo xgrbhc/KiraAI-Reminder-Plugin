@@ -77,7 +77,7 @@ class StorageMigrationTests(unittest.TestCase):
             )
             return SimpleNamespace(sid="qq:gm:20001", messages=[message])
 
-        plugin.config = SimpleNamespace(
+        plugin.config = main.ReminderConfig(
             autonomy_allowed_tools=["set_reminder", "exec"],
             autonomy_mode="plan_only",
             allowed_sessions=[],

@@ -99,7 +99,10 @@ def test_core_provider_failure_hook_order_keeps_delivery_unconfirmed(
     reminder_main, tmp_path: Path, monkeypatch
 ):
     from core.agent.agent_executor import AgentExecutionContext, AgentExecutor
-    from core.plugin.plugin_handlers import EventHandler, EventType, Priority, event_handler_reg
+    try:
+        from core.plugin.handlers import EventHandler, EventType, Priority, event_handler_reg
+    except ModuleNotFoundError:
+        from core.plugin.plugin_handlers import EventHandler, EventType, Priority, event_handler_reg
     from core.provider import LLMRequest, ProviderAPIError
 
     async def run():
@@ -126,7 +129,7 @@ def test_core_provider_failure_hook_order_keeps_delivery_unconfirmed(
             raise ProviderAPIError("offline")
 
         model = SimpleNamespace(
-            model=SimpleNamespace(provider_name="test", model_id="test"),
+            model=SimpleNamespace(provider_name="test", model_id="test", model_name="test"),
             chat=failed_chat,
         )
         context = AgentExecutionContext(
@@ -177,7 +180,10 @@ def test_transient_failure_to_record_provider_error_cannot_confirm_delivery(
 
 def test_core_model_fallback_success_confirms_delivery(reminder_main, tmp_path: Path, monkeypatch):
     from core.agent.agent_executor import AgentExecutionContext, AgentExecutor
-    from core.plugin.plugin_handlers import EventHandler, EventType, Priority, event_handler_reg
+    try:
+        from core.plugin.handlers import EventHandler, EventType, Priority, event_handler_reg
+    except ModuleNotFoundError:
+        from core.plugin.plugin_handlers import EventHandler, EventType, Priority, event_handler_reg
     from core.provider import LLMRequest, ProviderAPIError
 
     async def run():
@@ -208,7 +214,7 @@ def test_core_model_fallback_success_confirms_delivery(reminder_main, tmp_path: 
 
         models = [
             SimpleNamespace(
-                model=SimpleNamespace(provider_name="test", model_id=name), chat=chat
+                model=SimpleNamespace(provider_name="test", model_id=name, model_name=name), chat=chat
             )
             for name, chat in (("primary", failed_chat), ("fallback", normal_chat))
         ]

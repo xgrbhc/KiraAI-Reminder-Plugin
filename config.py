@@ -91,6 +91,8 @@ ADVANCED_CONFIG_DEFAULTS = {
     "autonomy_allowed_tools": DEFAULT_AUTONOMY_ALLOWED_TOOLS,
     "usage_prompt": DEFAULT_USAGE_PROMPT,
     "autonomous_usage_prompt": DEFAULT_AUTONOMOUS_USAGE_PROMPT,
+    "usage_prompt_source": "auto",
+    "autonomous_usage_prompt_source": "auto",
 }
 
 def flatten_config(cfg: dict) -> dict:
@@ -122,6 +124,18 @@ def scoped_acl_entries(entries: List[str], legacy_adapter: str = "") -> frozense
 
 
 class ReminderConfig(BaseModel):
+    def effective_autonomy_tools(self) -> set[str]:
+        """Derive mode capabilities without overwriting saved custom selections."""
+        if self.autonomy_mode == "off":
+            return set()
+        allowed = set(self.autonomy_allowed_tools)
+        if self.autonomy_mode == "trusted_admin":
+            return allowed | {"exec", "manage_background_exec"}
+        allowed &= set(DEFAULT_AUTONOMY_ALLOWED_TOOLS) | {"list_delivery_issues", "review_delivery_issue"}
+        if self.autonomy_mode == "observe":
+            allowed &= {"list_reminders", "list_autonomous_intents", "list_delivery_issues"}
+        return allowed
+
     admin_users: List[str] = Field(default_factory=list, description="聊天管理员列表，格式为适配器名称:用户ID，仅管理该适配器")
     authorized_users: List[str] = Field(default_factory=list, description="额外允许群聊创建提醒的用户列表，格式为适配器名称:用户ID")
     legacy_acl_adapter: str = Field(default="", description="旧裸用户ID权限的适配器归属，不是全局权限")

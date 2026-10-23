@@ -24,6 +24,8 @@ from core.chat.message_elements import Text
 from core.utils.path_utils import get_data_path
 
 from .identity import (
+    ENVELOPE_NAMESPACE,
+    event_messages,
     EventOrigin,
     IDENTITY_SCHEMA_VERSION,
     IdentityResolver,
@@ -69,6 +71,7 @@ from .autonomy import (
 )
 from .storage import ReminderStorage, ReminderStorageError
 from .migration import migrate_identity_stores, pin_legacy_acl_adapter, persist_advanced_config
+from .prompt_settings import resolve_prompt
 from .message_sources import MessageSources, requires_source_selection, CONFIRMATION_REQUIRED
 from .confirmation_routes import ConfirmationRoutes
 from .delivery import DeliveryTracker, delivery_time_fields
@@ -193,7 +196,7 @@ class ReminderPlugin(BasePlugin):
         )
         self._insert_prompt_after(req.system_prompt, prompt, after_name="output")
 
-    @on.llm_request(priority=Priority.LOW)
+    @on.llm_request(priority=Priority.LOW - 10)
     async def enforce_autonomy_tool_policy(
         self,
         event: KiraMessageBatchEvent,
@@ -320,9 +323,8 @@ class ReminderPlugin(BasePlugin):
     def _get_usage_prompt(self) -> str:
         cfg = self.plugin_cfg if isinstance(self.plugin_cfg, dict) else {}
         flat_cfg = self._flatten_config(cfg)
-        if "usage_prompt" in flat_cfg:
-            return str(flat_cfg.get("usage_prompt") or "").strip()
-        return str(getattr(self, "_default_usage_prompt", DEFAULT_USAGE_PROMPT) or "").strip()
+        default = str(getattr(self, "_default_usage_prompt", DEFAULT_USAGE_PROMPT) or "")
+        return resolve_prompt(flat_cfg, "usage_prompt", default)
 
     @staticmethod
     def _load_default_usage_prompt() -> str:
@@ -345,11 +347,21 @@ class ReminderPlugin(BasePlugin):
     def _get_autonomous_usage_prompt(self) -> str:
         cfg = self.plugin_cfg if isinstance(self.plugin_cfg, dict) else {}
         flat_cfg = self._flatten_config(cfg)
-        prompt = str(flat_cfg.get("autonomous_usage_prompt") or "").strip()
-        return prompt or DEFAULT_AUTONOMOUS_USAGE_PROMPT
+        return resolve_prompt(flat_cfg, "autonomous_usage_prompt", DEFAULT_AUTONOMOUS_USAGE_PROMPT)
 
     def _filter_internal_event_tools(self, event: KiraMessageBatchEvent, req: LLMRequest):
+        marked = any(
+            isinstance(extra, dict) and ENVELOPE_NAMESPACE in extra
+            for extra in [getattr(event, "extra", None), *[
+                getattr(message, "extra", None) for message in event_messages(event)
+            ]]
+        )
         principal = self._get_principal(event)
+        if marked and not principal.trusted:
+            # Never promote a stale or mixed internal envelope into user authority.
+            event.stop()
+            logger.warning("[Reminder] Rejected untrusted or mixed internal event sid=%s", self._get_sid(event))
+            return
         tool_set = getattr(req, "tool_set", None)
         tools = getattr(tool_set, "tools", None)
         if not isinstance(tools, list):
@@ -359,16 +371,16 @@ class ReminderPlugin(BasePlugin):
             return
         if not (principal.trusted and principal.kind is PrincipalKind.BOT and principal.is_autonomy_event):
             return
-        allowed = set(self.config.autonomy_allowed_tools)
+        if self.config.autonomy_mode == "off":
+            tool_set.remove(*(tool.name for tool in tools))
+            event.stop()
+            return
+        allowed = self.config.effective_autonomy_tools()
         if (
             principal.session_id in getattr(self.config, "allowed_sessions", [])
             and ":dm:" in principal.session_id
         ):
             allowed.update({"list_delivery_issues", "review_delivery_issue"})
-        if self.config.autonomy_mode != "trusted_admin":
-            allowed &= set(DEFAULT_AUTONOMY_ALLOWED_TOOLS) | {
-                "list_delivery_issues", "review_delivery_issue"
-            }
         if self.config.autonomy_mode == "observe":
             allowed &= {"list_reminders", "list_autonomous_intents", "list_delivery_issues"}
         disabled = [tool.name for tool in tools if getattr(tool, "name", "") not in allowed]
@@ -886,7 +898,7 @@ class ReminderPlugin(BasePlugin):
         capabilities: Optional[set[str]] = None,
         delivery_id: str = "",
     ):
-        """Publish a reminder notice and force the current session buffer to flush."""
+        """Publish a scheduled event independently from pending user messages."""
         cur_time = int(time.time())
         parts = session.split(":")
         if len(parts) != 3:
@@ -925,6 +937,13 @@ class ReminderPlugin(BasePlugin):
             capabilities=capabilities or set(),
             delivery_id=delivery_id,
         )
+        event_label = {
+            EventOrigin.REMINDER_FIRE: "定时任务",
+            EventOrigin.AUTONOMY_DAILY_REFLECTION: "每日自主检查",
+            EventOrigin.AUTONOMY_FOLLOWUP_DUE: "自主跟进",
+            EventOrigin.AUTONOMY_RANDOM_CHECK: "随机自主检查",
+        }.get(origin, "调度事件")
+        notice_chain = MessageChain([Text(f"[{event_label}｜系统触发]\n"), *chain])
         event = KiraMessageEvent(
             adapter=adapter.info,
             message_types=adapter.message_types,
@@ -939,7 +958,7 @@ class ReminderPlugin(BasePlugin):
                 self_id=self_id,
                 is_notice=True,
                 is_mentioned=True,
-                chain=chain,
+                chain=notice_chain,
                 extra=envelope,
             ),
             timestamp=cur_time,
@@ -951,7 +970,7 @@ class ReminderPlugin(BasePlugin):
                 session_id=target_id,
                 session_title=sender_name,
             )
-        event.flush(force=True)
+        event.trigger(force=True)
         await self.ctx.event_bus.publish(event)
 
     async def _fire_reminder(self, sid: str, r: Dict, delivery_id: str | None = None):

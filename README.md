@@ -6,7 +6,9 @@
 
 **高可用、全功能、智能化的 KiraAI 定时提醒生态插件**
 
-![Version](https://img.shields.io/badge/version-v2.3.1-blue.svg)
+![Version](https://img.shields.io/badge/version-v2.4.0-blue.svg)
+
+版本变更与升级说明见 [更新记录](CHANGELOG.md)。
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![KiraAI](https://img.shields.io/badge/KiraAI-Plugin-orange.svg)
 
@@ -93,10 +95,24 @@ KiraAI/
 - `action_policy`：独立的自动动作权限策略，可选 `admin_only`、`admin_and_trusted_bot` 或 `all`；默认不会因为开启群聊 `all` 而同步开放高风险 action。
 - `autonomy_enabled` / `allowed_sessions`：自主意图循环总开关与会话白名单。
 - `advanced_config.autonomy_mode`：可选 `off`、`observe`、`plan_only`、`act_with_confirm`、`trusted_admin`；权限在工具执行层硬校验。
-- `advanced_config.autonomy_allowed_tools`：自主事件工具白名单。非 `trusted_admin` 模式会继续限制为插件自身安全工具。
+- `advanced_config.autonomy_allowed_tools`：保存的自主工具选择。实际可用集合按模式计算；`trusted_admin` 自动补充 `exec`、`manage_background_exec`，其他模式收回这两项并限制在插件安全工具内。自动加入的工具不会追加显示到自定义列表，且仍须核心注册工具并允许执行。切换模式不会擦除自定义列表；若要撤销可信模式内置的执行能力，请切换模式。
+
+保存配置会重新加载正在运行的插件，并按新模式重新建立自主调度。`off` 停止自主循环且拒绝已排队的自主请求；`observe` 仅保留查询工具并停止到期意图兜底检查；`plan_only` / `act_with_confirm` 支持提醒和意图管理，不开放 shell；`trusted_admin` 自动提供 shell 和后台执行管理。`act_with_confirm` 不包含外部 shell 的确认执行协议。总开关 `autonomy_enabled`、`allowed_sessions`、群聊策略、`action_policy` 与核心 `exec_access` 仍独立生效，切换模式不会替用户扩大这些范围。每日时间、随机频率和自定义提示词保留，切回原模式可以继续使用。
+
+插件推送使用简短的事件类型标记，例如“[定时任务｜系统触发]”或“[自主跟进｜系统触发]”，随后是任务内容。来源标记不附带行为指导或工具使用提示词。推送独立处理，任务所有者身份用于代码层权限校验；过期或混合的内部信封会拒绝处理。
+
+Mode changes preserve saved tool selections and schedules. `trusted_admin` automatically includes `exec` and `manage_background_exec`; switching to another mode revokes them. The master switch, session scope and core permissions remain independent. Scheduled messages carry a short event-type label and are processed separately from pending user messages. No behavioral or tool-use instructions are added by the source-labeling mechanism. Owner identity remains an authorization attribute.
 - `advanced_config.usage_prompt`：注入 LLM 请求的插件使用提示词，用于指导模型何时调用提醒工具。
 
-默认使用说明已同步按需来源查询和单次真实确认规则，代码备用默认值与 schema 一致。升级不会覆盖保存的 `usage_prompt`；若要采用新版，可在插件高级配置中粘贴 [已确认改稿第 2.4 节](docs/PROMPT_CHANGE_PROPOSAL.md) 的完整文本，再按当前部署方式保存／重载。不需要卸载插件或删除配置。
+两项提示词分别通过 `advanced_config.usage_prompt_source` 和 `advanced_config.autonomous_usage_prompt_source` 选择来源：
+
+- `auto`（自动兼容，初始值）：识别已知发布版本的默认文案，使用当前默认；未知或修改过的文案继续使用原文。识别只忽略首尾空白和换行格式，不使用模糊匹配。
+- `default`（跟随默认）：始终使用当前插件默认。恢复默认只需选择此项并保存，不清空原自定义文本，也不影响其他配置。
+- `custom`（自定义）：使用保存的文本；留空明确关闭这一项提示词。编辑文本后请同时选择 `custom`。
+
+`auto` 保留旧空值语义：提醒功能提示词为空表示关闭，自主检查提示词为空表示使用默认。新选择 `custom` 后，两项都遵循“空值关闭”。兼容识别在读取时完成，不重写提示词，不额外迁移整份配置。跟随默认时，下方文本框保留旧内容，不代表当前注入的默认文案。两项来源相互独立，不改变工具权限或自主调度。
+
+默认使用说明沿用 [已确认改稿第 2.4 节](docs/PROMPT_CHANGE_PROPOSAL.md)，本次没有扩写提示词正文。维护者更新默认文案时须保留 `prompt_settings.py` 中的旧默认摘要，并登记新版本摘要，以便后续升级仍可识别。
 
 新建随机提醒的有效次数须为 1~100 的整数，随机区间须同时提供两端；省略次数仍默认 1 次，有效固定次数优先于区间。无效或超限请求整批拒绝，普通提醒及既有任务恢复不受影响。本限制是单次批量保护，不是用户／会话总配额；边界见 [随机提醒数量保护方案](docs/RANDOM_REMINDER_LIMIT_PLAN.md)。
 

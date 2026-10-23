@@ -15,7 +15,10 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.testclient import TestClient
 
-from core.plugin.plugin_registry import PluginComponents, _plugin_components
+try:
+    from core.plugin.registry import PluginComponents, _plugin_components
+except ModuleNotFoundError:
+    from core.plugin.plugin_registry import PluginComponents, _plugin_components
 
 from _loader import PLUGIN_DIR, load_plugin_module
 from conftest import attach_delivery

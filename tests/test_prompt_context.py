@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import inspect
 import json
 import pickle
 import re
@@ -234,7 +235,12 @@ def test_core_assembly_keeps_system_stable_and_filters_recovery_from_history(
             await plugin.inject_usage_prompt(event, req)
             plugin._delivery.issues = entries
             await plugin.inject_delivery_issues(event, req)
-            req.assemble_prompt(dynamic_position=dynamic_position, memory_position=memory_position)
+            if "dynamic_position" in inspect.signature(req.assemble_prompt).parameters:
+                req.assemble_prompt(dynamic_position=dynamic_position, memory_position=memory_position)
+            else:
+                if (dynamic_position, memory_position) != ("latest_user", "latest_user"):
+                    pytest.skip("This core version does not expose configurable prompt positions")
+                req.assemble_prompt()
             assert req.messages[1:-1] == history
             persisted = "".join(p.to_string() for p in req.user_prompt
                                 if isinstance(p, Prompt) and p.persist)

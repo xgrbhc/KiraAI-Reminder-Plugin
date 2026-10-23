@@ -8,7 +8,10 @@ import json
 import pytest
 
 from _loader import load_plugin_module
-from core.plugin.plugin_registry import _plugin_components
+try:
+    from core.plugin.registry import _plugin_components
+except ModuleNotFoundError:
+    from core.plugin.plugin_registry import _plugin_components
 from test_delivery import SID, _event, _plugin, _record
 
 delivery = load_plugin_module("delivery")

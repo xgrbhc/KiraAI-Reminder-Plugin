@@ -354,7 +354,10 @@ def test_empty_query_and_long_non_text_chains_are_bounded(plugin):
 
 
 def test_registered_source_tool_uses_optional_static_schema(reminder_main):
-    from core.plugin.plugin_registry import _plugin_components
+    try:
+        from core.plugin.registry import _plugin_components
+    except ModuleNotFoundError:
+        from core.plugin.plugin_registry import _plugin_components
     tools = _plugin_components["reminder_plugin"].tools
     assert "list_message_sources" in tools
     schema = tools["set_reminder"]["parameters"]
