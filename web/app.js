@@ -17,6 +17,17 @@ createApp({
         const loadError = ref('')
         const deliveryStatusKnown = ref(false)
         const startupError = ref('')
+        const serverTimezone = ref('')
+        const editor = ref(null)
+        const editForm = ref({})
+        const editError = ref('')
+        const editBlocked = ref(false)
+        const editBatch = ref(false)
+        const canEditBatch = computed(() => !!editor.value?.is_random
+            && !!editor.value.web_batch_revision && editor.value.web_batch_editable_count > 1)
+        const batchScopeLabel = computed(() => t('scopeBatch').replace('{count}', editor.value?.web_batch_editable_count || 0))
+        const editorElement = ref(null)
+        let editorFocus = null
         let requestSequence = 0
         let sessionRequestSequence = 0
         let toastSequence = 0
@@ -106,7 +117,13 @@ createApp({
             loadError.value = ''
             loading.value = false
             closeModal(true)
+            closeEditor(true)
         }, { flush: 'sync' })
+
+        watch(editError, message => {
+            if (message) nextTick(() => editorElement.value?.querySelector('[role="alert"]')
+                ?.scrollIntoView({ block: 'nearest' }))
+        })
 
         const dismissToast = id => {
             const timer = toastTimers.get(id)
@@ -173,6 +190,22 @@ createApp({
             }
         }
 
+        const writeApi = async (endpoint, payload) => {
+            let timer
+            try {
+                return await Promise.race([
+                    pluginApi().post(endpoint, payload),
+                    new Promise((_, reject) => {
+                        timer = setTimeout(() => reject(new Error(t('unknownOutcome'))), 30000)
+                        timers.add(timer)
+                    }),
+                ])
+            } finally {
+                clearTimeout(timer)
+                timers.delete(timer)
+            }
+        }
+
         const fetchReminders = async (allowDuringMutation = false) => {
             if (mutationBusy.value && allowDuringMutation !== true) return
             showSessionDropdown.value = false
@@ -202,6 +235,7 @@ createApp({
                 const nextDelivery = await fetchDeliveryIssues(sid, isCurrent)
                 if (!isCurrent()) return
                 reminders.value = nextReminders
+                serverTimezone.value = data.server_timezone || ''
                 deliveryIssues.value = nextDelivery.issues
                 deliveryStatusKnown.value = nextDelivery.known
                 displayedSessionId.value = sid
@@ -255,7 +289,7 @@ createApp({
             const focusToRestore = showConfirmModal.value ? previousFocus : null
             mutationBusy.value = true
             try {
-                const data = await pluginApi().post(endpoint, payload)
+                const data = await writeApi(endpoint, payload)
                 if (disposed) return
                 if (!data || !['ok', 'error'].includes(data.status)) throw new Error(t('invalidResponse'))
                 if (data.status === 'ok') {
@@ -270,7 +304,8 @@ createApp({
                         && sessionId.value.trim() === payload.session_id) {
                         openModal({kind: 'token', sid: payload.session_id, jobId: payload.job_id}, message)
                     } else {
-                        showToast(t('operationFailed'), message, 'error')
+                        showToast(t('operationFailed'), data.code === 'conflict' ? t('conflict') : message, 'error')
+                        if (data.code === 'conflict') await fetchReminders(true)
                     }
                 }
             } catch (e) {
@@ -298,6 +333,99 @@ createApp({
                 return openModal({kind: 'delete', sid, jobId, content: task.content}, t('deleteWarning'))
             }
             await runMutation(`reminders/${action}`, {session_id: sid, job_id: jobId})
+        }
+
+        const editableValues = task => ({ content: task.content || '', category: task.category || '',
+            time: (task.time || '').replace(' ', 'T'), repeat: task.repeat || 'none',
+            interval_minutes: task.interval_minutes || 30, action: task.action || '' })
+        const openEditor = jobId => {
+            if (actionsDisabled.value) return
+            const task = reminders.value.find(item => item.job_id === jobId)
+            if (!task?.web_editable || !task.web_revision) return
+            editorFocus = document.activeElement
+            editor.value = { ...task, sid: loadedSessionId.value, original: editableValues(task) }
+            editForm.value = editableValues(task)
+            editError.value = ''
+            editBlocked.value = false
+            editBatch.value = false
+            nextTick(() => editorElement.value?.querySelector('textarea')?.focus({ preventScroll: true }))
+        }
+        const closeEditor = (force = false) => {
+            if (mutationBusy.value && force !== true) return
+            editor.value = null
+            const target = editorFocus
+            editorFocus = null
+            nextTick(() => {
+                if (!disposed && target?.isConnected && !target.disabled) target.focus({ preventScroll: true })
+            })
+        }
+        const trapEditorFocus = event => {
+            const controls = [...(editorElement.value?.querySelectorAll(
+                'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary') || [])]
+                .filter(control => control.getClientRects().length)
+            const first = controls[0], last = controls[controls.length - 1]
+            if (!first) return
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+            if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+        }
+        const toggleImportance = jobId => {
+            const task = reminders.value.find(item => item.job_id === jobId)
+            if (!task?.web_revision || actionsDisabled.value) return
+            return runMutation('reminders/importance', { session_id: loadedSessionId.value,
+                job_id: jobId, revision: task.web_revision, important: !task.important })
+        }
+        const saveEditor = async () => {
+            const snapshot = editor.value
+            if (!snapshot || actionsDisabled.value || editBlocked.value || snapshot.sid !== loadedSessionId.value) return
+            editError.value = ''
+            const form = { ...editForm.value }
+            if (!form.content.trim()) { editError.value = t('contentRequired'); return }
+            if (!snapshot.is_random && !formatDeliveryTimestamp(form.time)) { editError.value = t('timeInvalid'); return }
+            if (form.repeat === 'interval') {
+                form.interval_minutes = Number(form.interval_minutes)
+                if (!Number.isInteger(form.interval_minutes) || form.interval_minutes < 1 || form.interval_minutes > 1440) {
+                    editError.value = t('intervalInvalid'); return
+                }
+            }
+            const changes = Object.fromEntries(Object.entries(form).filter(([key, value]) =>
+                (!snapshot.is_random || ['content', 'category', 'action'].includes(key))
+                && (key !== 'interval_minutes' || form.repeat === 'interval') && value !== snapshot.original[key]))
+            if (form.repeat === 'interval' && snapshot.original.repeat !== 'interval') changes.interval_minutes = form.interval_minutes
+            if (!Object.keys(changes).length) { closeEditor(); return }
+            if ('time' in changes) changes.time = changes.time.replace('T', ' ')
+            const focusToRestore = editorFocus
+            mutationBusy.value = true
+            try {
+                const payload = { session_id: snapshot.sid, job_id: snapshot.job_id,
+                    revision: snapshot.web_revision, changes }
+                if (canEditBatch.value && editBatch.value) {
+                    payload.edit_batch = true
+                    payload.revision = snapshot.web_batch_revision
+                }
+                const data = await writeApi('reminders/edit', payload)
+                if (disposed || editor.value !== snapshot) return
+                if (!data || !['ok', 'error'].includes(data.status)) throw new Error(t('invalidResponse'))
+                if (data.status === 'ok') {
+                    closeEditor(true)
+                    showToast(t('taskSaved'), data.msg || '')
+                    await fetchReminders(true)
+                } else {
+                    editError.value = data.code === 'conflict' ? t('editConflict')
+                        : data.code && t(data.code) !== data.code ? t(data.code) : data.msg || t('invalidResponse')
+                    if (data.code === 'conflict') editBlocked.value = true
+                }
+            } catch (e) {
+                editError.value = t('unknownOutcome')
+                editBlocked.value = true
+                loadedSessionId.value = ''
+                loadError.value = t('unknownOutcome')
+            } finally {
+                mutationBusy.value = false
+                nextTick(() => {
+                    if (!disposed && !editor.value && focusToRestore?.isConnected && !focusToRestore.disabled)
+                        focusToRestore.focus({ preventScroll: true })
+                })
+            }
         }
 
         const closeModal = (force = false, restoreFocus = true) => {
@@ -453,6 +581,8 @@ createApp({
         })
 
         return {
+            serverTimezone, editor, editForm, editError, editBlocked, editBatch, canEditBatch, batchScopeLabel, editorElement,
+            openEditor, closeEditor, saveEditor, trapEditorFocus, toggleImportance,
             loading, reminders, deliveryIssues, filteredDeliveryIssues, pendingJobIds, toasts, dismissToast, availableSessions,
             sessionId, selectedUserId, currentSessionUsers, filteredReminders,
             showSessionDropdown,

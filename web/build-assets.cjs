@@ -71,3 +71,4 @@ const manifest = {
 }
 fs.writeFileSync(path.join(vendor, 'asset-manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
 console.log(`Built ${files.size} local assets (${Object.values(manifest.files).reduce((sum, file) => sum + file.bytes, 0)} bytes).`)
+require('./version-assets.cjs')

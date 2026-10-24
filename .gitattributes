@@ -1,2 +1,6 @@
 # Preserve the exact upstream/generated asset bytes across operating systems.
 web/vendor/** -text linguist-vendored
+# Fingerprinted application assets must keep identical bytes in Git archives.
+web/app.js -text
+web/i18n.js -text
+web/style.css -text

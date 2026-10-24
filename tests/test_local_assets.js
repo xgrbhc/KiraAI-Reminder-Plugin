@@ -17,7 +17,10 @@ test('dashboard scripts and styles are shipped relative assets, without CDN fall
     assert.equal(resources.length, 7)
     for (const relative of resources) {
         assert.ok(relative.startsWith('./'), relative)
-        assert.ok(fs.statSync(path.join(web, relative)).size > 0, relative)
+        const [name, version] = relative.split('?v=')
+        const bytes = fs.readFileSync(path.join(web, name))
+        assert.ok(bytes.length > 0, relative)
+        assert.equal(version, crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 12))
     }
     assert.doesNotMatch(html, /https?:\/\/|cdn\.|unpkg|fonts\.googleapis/)
     assert.ok(html.indexOf('vue.global.prod.js') < html.indexOf('./app.js'))
@@ -25,7 +28,7 @@ test('dashboard scripts and styles are shipped relative assets, without CDN fall
 
 test('component defaults precede Tailwind overrides, preserving semantic borders, circles and shadows', () => {
     const styles = [...read('index.html').matchAll(/<link rel="stylesheet" href="([^"]+)">/g)]
-        .map(match => match[1])
+        .map(match => match[1].split('?')[0])
     assert.deepEqual(styles, [
         './vendor/outfit/outfit.css', './vendor/fontawesome/css/icons.min.css',
         './style.css', './vendor/tailwind.min.css',
@@ -137,7 +140,7 @@ test('long reminder metadata wraps while card actions retain their size and visi
     assert.match(html, /<span class="min-w-0 content-wrap">\{\{ task\.creator_name/)
     assert.match(html, /<span class="min-w-0 content-wrap">\{\{ task\.action \}\}/)
     assert.match(html, /v-for="u in currentSessionUsers"[^>]*class="min-w-0 max-w-full/)
-    assert.match(html, /class="shrink-0 flex items-center justify-end [^"]*" style="opacity: 1;"/)
+    assert.match(html, /class="task-actions shrink-0 flex items-center justify-end gap-3"/)
     for (const action of ['pause', 'resume', 'delete']) {
         const classes = html.match(new RegExp(`@click="doAction\\('${action}', task.job_id\\)" class="([^"]+)"`))[1]
         for (const name of ['w-12', 'h-12', 'rounded-full']) assert.ok(classes.split(/\s+/).includes(name))

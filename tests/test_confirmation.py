@@ -345,8 +345,8 @@ def test_autonomous_cleanup_cannot_remove_important_followups(plugin, operation)
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("group", [None, "group-1"])
-def test_important_delete_and_unmark_do_not_allow_model_self_confirmation(plugin, group):
+def test_group_important_delete_and_unmark_require_user_confirmation(plugin):
+    group = "group-1"
     async def run():
         event, record = await create(plugin, important=True, group=group)
         result = await plugin.delete_reminder(event, record["job_id"])
@@ -364,6 +364,106 @@ def test_important_delete_and_unmark_do_not_allow_model_self_confirmation(plugin
         assert (await plugin._storage.load())[event.sid][0]["important"]
         approved = await observe(plugin, message(text="确认", group=group))
         assert "取消重要标记" in await plugin.confirm_reminder_request(approved, key)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("text", ["行，你处理吧", "好，清理掉", "直接删了"])
+@pytest.mark.parametrize("operation", ["delete_reminder", "unmark_reminder_important"])
+def test_private_important_operations_delegate_consent_to_model(plugin, text, operation):
+    async def run():
+        plugin.config.admin_users = []
+        event, record = await create(plugin, important=True, group=None)
+        event = batch(message(text=text, group=None))
+        result = await getattr(plugin, operation)(event, record["job_id"])
+        assert "待确认" not in result and "❌" not in result
+        records = (await plugin._storage.load())[event.sid]
+        assert not records if operation == "delete_reminder" else not records[0]["important"]
+        assert json.loads(await plugin.list_pending_reminder_requests(event)) == []
+    asyncio.run(run())
+
+
+def test_delete_reply_is_not_blocked_by_pending_unmark_request(plugin):
+    async def run():
+        event, record = await create(plugin, important=True)
+        await plugin.unmark_reminder_important(event, record["job_id"])
+        await plugin.delete_reminder(event, record["job_id"])
+        items = json.loads(await plugin.list_pending_reminder_requests(event))
+        keys = {item["operation"]: item["request_id"] for item in items}
+        approved = await observe(plugin, message(text="确认删除"))
+        assert "确认未完成" in await plugin.confirm_reminder_request(approved, keys["unmark_reminder_important"])
+        assert "已删除" in await plugin.confirm_reminder_request(approved, keys["delete_reminder"])
+    asyncio.run(run())
+
+
+def test_two_important_delete_requests_still_require_an_id(plugin):
+    async def run():
+        for _ in range(2):
+            event, record = await create(plugin, important=True)
+            await plugin.delete_reminder(event, record["job_id"])
+        items = json.loads(await plugin.list_pending_reminder_requests(event))
+        approved = await observe(plugin, message(text="确认删除"))
+        for item in items:
+            assert "确认未完成" in await plugin.confirm_reminder_request(approved, item["request_id"])
+        key = items[0]["request_id"]
+        approved = await observe(plugin, message(text=f"确认删除 {key}"))
+        assert "已删除" in await plugin.confirm_reminder_request(approved, key)
+        assert len((await plugin._storage.load())[event.sid]) == 1
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("source", ["notice", "scheduled_user", "bot", "mixed", "wrong_sender"])
+def test_private_exemption_does_not_apply_to_internal_or_mixed_events(plugin, reminder_main, source):
+    async def run():
+        plugin.config.admin_users = []
+        event, record = await create(plugin, important=True, group=None)
+        if source == "notice":
+            event = batch(message(group=None, is_notice=True))
+        elif source in {"scheduled_user", "bot"}:
+            envelope = plugin._identity.build_envelope(
+                origin=reminder_main.EventOrigin.REMINDER_FIRE,
+                principal_kind=(reminder_main.PrincipalKind.USER if source == "scheduled_user"
+                                else reminder_main.PrincipalKind.BOT),
+                principal_id="alice",
+            )
+            event = batch(message(group=None, is_notice=True, extra=envelope))
+        elif source == "mixed":
+            event = batch(message(group=None), message("bob", group=None))
+        else:
+            event.messages[0].sender.user_id = "bob"
+        before = await plugin._storage.load()
+        assert "已删除" not in await plugin.delete_reminder(event, record["job_id"])
+        assert await plugin._storage.load() == before
+    asyncio.run(run())
+
+
+def test_private_batch_deletion_still_checks_every_owner(plugin):
+    async def run():
+        plugin.config.admin_users = []
+        event, record = await create(plugin, important=True, group=None)
+        async with plugin._storage.modify() as data:
+            data[event.sid][0]["random_batch_id"] = "batch-1"
+            data[event.sid].append({**data[event.sid][0], "job_id": "foreign-job",
+                                    "owner_id": "bob", "creator_id": "bob"})
+        before = await plugin._storage.load()
+        assert "权限拒绝" in await plugin.delete_reminder(event, record["job_id"], delete_batch=True)
+        assert await plugin._storage.load() == before
+    asyncio.run(run())
+
+
+def test_private_deletion_rejects_a_target_changed_before_execution(plugin, monkeypatch):
+    async def run():
+        event, record = await create(plugin, important=True, group=None)
+        routes = plugin._confirmation_routes()
+        execute = routes.execute
+
+        async def change_then_execute(*args, **kwargs):
+            async with plugin._storage.modify() as data:
+                data[event.sid][0]["content"] = "changed after selection"
+            return await execute(*args, **kwargs)
+
+        monkeypatch.setattr(routes, "execute", change_then_execute)
+        assert "目标提醒已变化" in await plugin.delete_reminder(event, record["job_id"])
+        assert (await plugin._storage.load())[event.sid][0]["content"] == "changed after selection"
     asyncio.run(run())
 
 

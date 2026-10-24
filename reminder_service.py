@@ -423,6 +423,7 @@ class ReminderService:
         interval_minutes: int | None = None,
         category: str | None = None,
         action: str | None = None,
+        edit_batch: bool = False,
     ) -> str:
         try:
             sid = self._get_sid(event)
@@ -448,8 +449,37 @@ class ReminderService:
                 if not allowed:
                     return reason
 
+                if type(edit_batch) is not bool:
+                    return "修改范围无效"
                 if r.get("is_random"):
-                    return "不支持修改随机批次提醒"
+                    if any(value is not None for value in (time, repeat, interval_minutes)):
+                        return "随机任务仅支持修改内容、分类和动作，保留原随机时间"
+                    changes = {key: value for key, value in
+                               (("content", content), ("category", category), ("action", action))
+                               if value is not None}
+                    if not changes or any(not isinstance(value, str) for value in changes.values()):
+                        return "请提供有效的内容、分类或动作"
+                    if content is not None and not content.strip():
+                        return "任务内容不能为空"
+                    now = get_local_now()
+                    if parse_time_string(r["time"]) <= now:
+                        return "随机任务已到期，仅支持修改尚未触发的任务"
+                    targets = [r]
+                    if edit_batch:
+                        batch_id = r.get("random_batch_id")
+                        if not batch_id:
+                            return "随机任务缺少批次编号，仅支持修改本条"
+                        targets = [item for item in reminders
+                                   if item.get("is_random") and item.get("random_batch_id") == batch_id
+                                   and parse_time_string(item["time"]) > now]
+                    if any(not self._check_permission(event, item, ReminderOperation.EDIT) for item in targets):
+                        return "❌ 权限拒绝：您无权修改该批次中的部分任务"
+                    # Validate every target before mutating, preserving the sampled times and identity.
+                    for item in targets:
+                        item.update(changes)
+                    return f"已更新: {r['content']} (共{len(targets)}项，保留随机时间)"
+                if edit_batch:
+                    return "仅随机任务支持批次修改"
 
                 new_repeat = repeat if repeat is not None else r.get("repeat", "none")
                 if new_repeat not in ("none", "daily", "weekly", "monthly", "yearly", "interval"):

@@ -127,8 +127,8 @@
       "sha256": "d5bd0397afac8df86b1f2875ca1817578952df71507d671b9434c6ee55e0c6c7"
     },
     "tailwind.min.css": {
-      "bytes": 20972,
-      "sha256": "35b9e03de18a7bbced5791d695233d1a5febf4aa0d9d9a5bbb3778cc94a6741a"
+      "bytes": 18900,
+      "sha256": "68990edc4987d580da3d00439ae863043f9665b0de5a482d22aca316edeab362"
     },
     "vue.global.prod.js": {
       "bytes": 168331,

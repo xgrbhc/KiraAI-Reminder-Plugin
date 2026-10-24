@@ -65,8 +65,8 @@ def test_dashboard_assets_resolve_from_folder_page():
         page = client.get("/page/plugin/reminder_plugin/dashboard", follow_redirects=True)
         assert page.status_code == 200
         assert page.url.path.endswith("/dashboard/")
-        assert '<link rel="stylesheet" href="./style.css">' in page.text
-        assert '<script src="./app.js"></script>' in page.text
+        assert re.search(r'<link rel="stylesheet" href="\./style.css\?v=[a-f0-9]{12}">', page.text)
+        assert re.search(r'<script src="\./app.js\?v=[a-f0-9]{12}"></script>', page.text)
         assert "<style>" not in page.text
         assert "<script>" not in page.text
 
@@ -85,7 +85,7 @@ def test_dashboard_assets_resolve_from_folder_page():
             asset = client.get(urljoin(str(page.url), resource))
             assert asset.status_code == 200, resource
             assert asset.content, resource
-            if resource.endswith(".css"):
+            if resource.split("?")[0].endswith(".css"):
                 for font in re.findall(r'url\([\'"]?([^\)\'"\s]+)[\'"]?\)', asset.text):
                     font_response = client.get(urljoin(str(asset.url), font))
                     assert font_response.status_code == 200, font
@@ -249,7 +249,7 @@ def test_delete_dispatch_from_tool_api_and_quick_command(reminder_main, tmp_path
 
 
 def test_important_delete_requires_actor_bound_confirmation(reminder_main, tmp_path: Path):
-    sid = "qq:dm:10001"
+    sid = "qq:gm:group-1"
     record = {
         "job_id": "job-1",
         "content": "important task",
@@ -271,8 +271,8 @@ def test_important_delete_requires_actor_bound_confirmation(reminder_main, tmp_p
         plugin._check_permission = lambda *_args: True
         plugin._is_admin_user = lambda _event: False
         plugin._identity = reminder_main.IdentityResolver("test-secret")
-        owner_event = batch(message("10001", group=None), adapter="qq")
-        other_event = batch(message("20002", group=None), adapter="qq")
+        owner_event = batch(message("10001"), adapter="qq")
+        other_event = batch(message("20002"), adapter="qq")
 
         response = await plugin.delete_reminder(owner_event, job_id="job-1")
         assert "待确认请求" in response
@@ -280,7 +280,7 @@ def test_important_delete_requires_actor_bound_confirmation(reminder_main, tmp_p
         assert "确认未完成" in await plugin.confirm_delete_reminder(other_event, token)
         assert "确认未完成" in await plugin.confirm_delete_reminder(owner_event, token)
         assert await plugin._storage.load() == {sid: [record]}
-        confirmed = await observe(plugin, message("10001", "确认删除", group=None), "qq")
+        confirmed = await observe(plugin, message("10001", "确认删除"), "qq")
         assert await plugin.confirm_delete_reminder(confirmed, token) == "已删除: important task"
         assert await plugin._storage.load() == {sid: []}
 

@@ -73,6 +73,150 @@ function dashboard(options = {}) {
     }
 }
 
+function editorDashboard(options = {}) {
+    const task = { ...record(), time: '2030-01-01 10:00', repeat: 'daily', action: 'old action',
+        category: 'old category', web_revision: 'revision-1', web_editable: true, ...options.task }
+    return dashboard({ ...options, get: async endpoint => ({ status: 'ok', server_timezone: 'UTC+08:00',
+        data: endpoint.startsWith('reminders/') ? [task] : [] }) })
+}
+
+test('editor sends only changed fields and preserves server wall time', async () => {
+    const h = editorDashboard(); await h.load()
+    h.ui.openEditor('job1')
+    assert.equal(h.ui.editForm.value.time, '2030-01-01T10:00')
+    h.ui.editForm.value.category = ''
+    h.ui.editForm.value.action = ''
+    h.ui.editForm.value.time = '2030-02-01T11:30'
+    await h.ui.saveEditor()
+    assert.deepEqual(h.posts()[0].payload, { session_id: 'A:dm:u1', job_id: 'job1', revision: 'revision-1',
+        changes: { category: '', action: '', time: '2030-02-01 11:30' } })
+    assert.equal(h.ui.editor.value, null)
+})
+
+test('unchanged or cancelled editor sends nothing; session switch closes it', async () => {
+    const h = editorDashboard(); await h.load()
+    h.ui.openEditor('job1'); await h.ui.saveEditor()
+    h.ui.openEditor('job1'); h.ui.editForm.value.content = 'discard'; h.ui.closeEditor()
+    h.ui.openEditor('job1'); h.ui.sessionId.value = 'B:dm:u2'
+    assert.equal(h.ui.editor.value, null)
+    assert.equal(h.posts().length, 0)
+})
+
+test('editor validates content and interval before sending', async () => {
+    const h = editorDashboard(); await h.load(); h.ui.openEditor('job1')
+    h.ui.editForm.value.content = ' '
+    await h.ui.saveEditor(); assert.equal(h.ui.editError.value, h.ui.t('contentRequired'))
+    h.ui.editForm.value.content = 'valid'; h.ui.editForm.value.repeat = 'interval'
+    h.ui.editForm.value.interval_minutes = 1.5
+    await h.ui.saveEditor(); assert.equal(h.ui.editError.value, h.ui.t('intervalInvalid'))
+    assert.equal(h.posts().length, 0)
+    h.ui.editForm.value.interval_minutes = '30'
+    await h.ui.saveEditor(); assert.equal(h.posts()[0].payload.changes.interval_minutes, 30)
+})
+
+for (const code of ['conflict', 'futureRequired']) test(`editor preserves input on ${code}`, async () => {
+    const h = editorDashboard({ post: async () => ({ status: 'error', code }) }); await h.load()
+    h.ui.openEditor('job1'); h.ui.editForm.value.content = 'my unsaved text'
+    await h.ui.saveEditor()
+    assert.equal(h.ui.editForm.value.content, 'my unsaved text')
+    assert.ok(h.ui.editError.value)
+    assert.equal(h.ui.editBlocked.value, code === 'conflict')
+    if (code === 'conflict') { await h.ui.saveEditor(); assert.equal(h.posts().length, 1) }
+})
+
+test('network failure preserves input and requires fresh data before retry', async () => {
+    const h = editorDashboard({ post: async () => { throw new Error('disconnected') } }); await h.load()
+    h.ui.openEditor('job1'); h.ui.editForm.value.content = 'keep me'
+    await h.ui.saveEditor()
+    assert.equal(h.ui.editForm.value.content, 'keep me')
+    assert.equal(h.ui.actionsDisabled.value, true)
+    assert.equal(h.ui.editBlocked.value, true)
+})
+
+test('stalled save unlocks the editor without retrying and ignores late success', async () => {
+    const pending = deferred(), h = editorDashboard({ post: () => pending.promise }); await h.load()
+    h.ui.openEditor('job1'); h.ui.editForm.value.content = 'keep after timeout'
+    const result = h.ui.saveEditor()
+    const timeout = [...h.timers.values()].find(timer => timer.delay === 30000)
+    assert.ok(timeout); timeout.callback(); await result
+    assert.equal(h.ui.mutationBusy.value, false)
+    assert.equal(h.ui.editBlocked.value, true)
+    pending.resolve({ status: 'ok' }); await Promise.resolve()
+    assert.equal(h.ui.editForm.value.content, 'keep after timeout')
+    assert.ok(h.ui.editor.value)
+    assert.equal(h.posts().length, 1)
+})
+
+test('star waits for server and ignores duplicate clicks without confirmation', async () => {
+    const pending = deferred(), h = editorDashboard({ post: () => pending.promise }); await h.load()
+    const result = h.ui.toggleImportance('job1')
+    h.ui.toggleImportance('job1')
+    assert.equal(h.posts().length, 1)
+    assert.equal(h.posts()[0].payload.important, true)
+    assert.equal(h.ui.reminders.value[0].important, undefined)
+    assert.equal(h.ui.showConfirmModal.value, false)
+    pending.resolve({ status: 'error', msg: 'save failed' }); await result
+    assert.equal(h.ui.reminders.value[0].important, undefined)
+})
+
+test('special tasks remain read-only but importance is available', async () => {
+    const h = editorDashboard({ task: { web_editable: false, important: true } }); await h.load()
+    h.ui.openEditor('job1'); assert.equal(h.ui.editor.value, null)
+    await h.ui.toggleImportance('job1'); assert.equal(h.posts()[0].payload.important, false)
+})
+
+test('duplicate saves submit once and preserve the captured revision', async () => {
+    const pending = deferred(), h = editorDashboard({ post: () => pending.promise }); await h.load()
+    h.ui.openEditor('job1'); h.ui.editForm.value.content = 'changed'
+    const result = h.ui.saveEditor(); await h.ui.saveEditor()
+    h.ui.closeEditor(); assert.ok(h.ui.editor.value)
+    assert.equal(h.posts().length, 1)
+    pending.resolve({ status: 'ok' }); await result
+    assert.equal(h.ui.editor.value, null)
+})
+
+test('editor and importance translations have matching locale keys', () => {
+    const h = editorDashboard()
+    assert.deepEqual(Object.keys(h.scope.window.ReminderDashboardMessages.zh).sort(),
+        Object.keys(h.scope.window.ReminderDashboardMessages.en).sort())
+})
+
+for (const wholeBatch of [false, true]) test(`random editor uses exact scope and preserves times: batch=${wholeBatch}`, async () => {
+    const h = editorDashboard({ task: { is_random: true, repeat: 'none', web_batch_revision: 'batch-revision', web_batch_editable_count: 2 } })
+    await h.load(); h.ui.openEditor('job1')
+    assert.equal(h.ui.editBatch.value, false)
+    h.ui.editBatch.value = wholeBatch
+    h.ui.editForm.value.content = 'new random content'
+    h.ui.editForm.value.time = '2031-01-01T10:00'
+    await h.ui.saveEditor()
+    const payload = h.posts()[0].payload
+    assert.deepEqual(payload.changes, { content: 'new random content' })
+    assert.equal(payload.revision, wholeBatch ? 'batch-revision' : 'revision-1')
+    assert.equal(payload.edit_batch, wholeBatch ? true : undefined)
+})
+
+test('single remaining random task hides batch scope and cannot submit a redundant batch', async () => {
+    const h = editorDashboard({ task: { is_random: true, repeat: 'none', web_batch_revision: 'batch', web_batch_editable_count: 1 } })
+    await h.load(); h.ui.openEditor('job1')
+    assert.equal(h.ui.canEditBatch.value, false)
+    h.ui.editBatch.value = true
+    h.ui.editForm.value.content = 'single edit'
+    await h.ui.saveEditor()
+    assert.equal(h.posts()[0].payload.edit_batch, undefined)
+    assert.equal(h.posts()[0].payload.revision, 'revision-1')
+})
+
+test('batch scope describes total eligible tasks in both locales', async () => {
+    const h = editorDashboard({ task: { is_random: true, web_batch_revision: 'batch', web_batch_editable_count: 3 } })
+    await h.load(); h.ui.openEditor('job1')
+    assert.equal(h.ui.canEditBatch.value, true)
+    assert.equal(h.ui.batchScopeLabel.value, '同批次未到期任务（共 3 条）')
+    h.changeLocale('en')
+    assert.equal(h.ui.batchScopeLabel.value, 'Not-yet-due tasks in this batch (3 total)')
+    const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8')
+    assert.match(html, /fieldset v-if="canEditBatch"/)
+})
+
 for (const decision of ['dismiss']) {
     test(`${decision}: opens in-page confirmation, cancel sends no request`, async () => {
         const h = dashboard(); await h.load()

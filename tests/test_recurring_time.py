@@ -98,10 +98,15 @@ def test_live_metadata_is_not_persisted_and_tracks_advance(reminder_main, tmp_pa
         result = await plugin.api_get_reminders(quote(SID, safe=""))
         row = result["data"][0]
         assert result["status"] == "ok"
+        revision = row.pop("web_revision")
+        assert len(revision) == 64
+        assert row.pop("web_editable") is True
         assert row == dict(original, schedule_status="scheduled", next_run_time="2099-01-02 10:15")
         row["content"] = "not a stored change"
         job.next_run_time += dt.timedelta(days=1)
-        assert (await plugin.api_get_reminders(SID))["data"][0]["next_run_time"] == "2099-01-03 10:15"
+        updated = (await plugin.api_get_reminders(SID))["data"][0]
+        assert updated["next_run_time"] == "2099-01-03 10:15"
+        assert updated["web_revision"] == revision
         assert (await plugin._storage.load())[SID] == [original]
         assert path.read_bytes() == before
     asyncio.run(run())

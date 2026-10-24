@@ -4,12 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KiraAI Reminder Dashboard</title>
-    <script src="./vendor/vue.global.prod.js"></script>
-    <link rel="stylesheet" href="./vendor/outfit/outfit.css">
-    <link rel="stylesheet" href="./vendor/fontawesome/css/icons.min.css">
-    <link rel="stylesheet" href="./style.css">
+    <script src="./vendor/vue.global.prod.js?v=b72394052eef"></script>
+    <link rel="stylesheet" href="./vendor/outfit/outfit.css?v=d5bd0397afac">
+    <link rel="stylesheet" href="./vendor/fontawesome/css/icons.min.css?v=ca9ac81eacd6">
+    <link rel="stylesheet" href="./style.css?v=43cf00141bcd">
     <!-- Component defaults must precede utility overrides; see FRONTEND_MAINTENANCE.md. -->
-    <link rel="stylesheet" href="./vendor/tailwind.min.css">
+    <link rel="stylesheet" href="./vendor/tailwind.min.css?v=68990edc4987">
 </head>
 <body class="p-4 sm:p-6 md:p-12 overflow-x-hidden">
     <div id="app" v-cloak class="max-w-6xl mx-auto">
@@ -24,30 +24,30 @@
             
             <div class="mt-6 xl:mt-0 min-w-0 flex flex-wrap gap-4 relative z-40">
                 <!-- Session Select -->
-                <div id="session-select-container" class="relative min-w-0 w-full sm:w-auto max-w-full">
-                    <div class="glass-panel px-4 py-3 flex items-center gap-3 relative z-40 hover:bg-white/5 transition-colors focus-within:ring-2 focus-within:ring-indigo-500/50 cursor-text shadow-lg">
+                <div id="session-select-container" class="relative min-w-0 w-full sm:w-auto max-w-full" @focusout="!$event.currentTarget.contains($event.relatedTarget) && (showSessionDropdown = false)" @keydown.esc.prevent.stop="showSessionDropdown = false">
+                    <div class="session-control glass-panel px-4 py-3 flex items-center gap-3 relative z-40 hover:bg-white/5 transition-colors focus-within:ring-2 focus-within:ring-indigo-500/50 cursor-text shadow-lg">
                         <i class="fa-solid fa-layer-group shrink-0 transition-colors" :class="sessionId ? 'text-indigo-400' : 'text-gray-500'"></i>
-                        <input v-model="sessionId" :disabled="mutationBusy" @focus="showSessionDropdown = true" @blur="showSessionDropdown = false" type="text" aria-label="Session ID" :placeholder="t('sessionPlaceholder')" class="bg-transparent border-none text-sm text-gray-200 focus:outline-none min-w-0 flex-1 w-full sm:w-64 placeholder-gray-500 font-medium" @keyup.enter="scanNetwork">
-                        <button type="button" :disabled="mutationBusy" :aria-label="t('selectSession')" class="shrink-0" @pointerdown.prevent @click="showSessionDropdown = !showSessionDropdown"><i class="fa-solid fa-chevron-down text-xs text-gray-500 transition-transform hover:text-white" :class="{'rotate-180': showSessionDropdown}"></i></button>
+                        <input v-model="sessionId" :disabled="mutationBusy" @focus="showSessionDropdown = true" type="text" aria-label="Session ID" :placeholder="t('sessionPlaceholder')" class="bg-transparent border-none text-sm text-gray-200 focus:outline-none min-w-0 flex-1 w-full sm:w-64 placeholder-gray-500 font-medium" @keyup.enter="scanNetwork">
+                        <button type="button" :disabled="mutationBusy" :aria-label="t('selectSession')" :aria-expanded="showSessionDropdown" aria-controls="session-menu" class="session-toggle shrink-0" @pointerdown.prevent @click="showSessionDropdown = !showSessionDropdown"><i class="fa-solid fa-chevron-down text-xs text-gray-500 transition-transform hover:text-white" :class="{'rotate-180': showSessionDropdown}"></i></button>
                     </div>
                     
                     <transition name="fade">
-                        <div v-show="showSessionDropdown" class="absolute top-full left-0 mt-3 w-full sm:w-80 max-w-full bg-[#12121a]/95 backdrop-blur-2xl border border-indigo-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.7)] z-40 max-h-80 overflow-y-auto custom-scrollbar rounded-xl">
+                        <div v-show="showSessionDropdown" class="session-menu absolute top-full left-0 mt-3 w-full sm:w-80 max-w-full bg-[#12121a]/95 backdrop-blur-2xl border border-indigo-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.7)] z-40 max-h-80 overflow-y-auto custom-scrollbar rounded-xl" id="session-menu">
                             <div v-if="availableSessions.length === 0" class="p-5 text-center text-sm text-gray-400 font-medium">{{ t('noSessions') }}</div>
                             <div v-else>
-                                <button type="button" v-for="s in filteredSessions" :key="s.id" :disabled="mutationBusy" @pointerdown.prevent @click="selectSession(s)" class="w-full text-left p-4 hover:bg-indigo-500/20 cursor-pointer transition-all border-b border-white/5 last:border-0 flex justify-between items-center group">
+                                <button type="button" v-for="s in filteredSessions" :key="s.id" :disabled="mutationBusy" :aria-pressed="sessionId === s.id" @pointerdown.prevent @click="selectSession(s)" class="session-option w-full text-left p-4 hover:bg-indigo-500/20 cursor-pointer transition-all border-b border-white/5 last:border-0 flex justify-between items-center group">
                                     <div class="min-w-0 flex flex-col overflow-hidden">
                                         <span class="text-sm font-bold text-gray-200 group-hover:text-indigo-300 truncate">{{ s.id }}</span>
                                         <span class="text-xs text-indigo-200/50 mt-1 font-medium">{{ s.count }} {{ t('reminderCount') }}</span>
                                     </div>
-                                    <i class="fa-solid fa-arrow-right shrink-0 text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity -translate-x-2 group-hover:translate-x-0 duration-300"></i>
+                                    <i class="fa-solid shrink-0 text-indigo-400" :class="sessionId === s.id ? 'fa-check' : 'fa-arrow-right'" aria-hidden="true"></i>
                                 </button>
                             </div>
                         </div>
                     </transition>
                 </div>
 
-                <button :disabled="mutationBusy || loading || scanning" @click="scanNetwork" class="glass-panel w-full sm:w-auto shrink-0 px-6 py-3 hover:bg-white/10 transition-all hover:scale-105 active:scale-95 text-sm font-bold flex items-center justify-center gap-2 relative z-40 shadow-lg text-white">
+                <button :disabled="mutationBusy || loading || scanning" @click="scanNetwork" class="glass-panel w-full sm:w-auto shrink-0 refresh-control px-6 py-3 hover:bg-white/10 transition-all text-sm font-medium flex items-center justify-center gap-2 relative z-40 shadow-lg text-white">
                     <i class="fa-solid fa-satellite-dish" :class="{'animate-pulse text-indigo-400': loading || scanning}"></i> {{ t('refreshData') }}
                 </button>
             </div>
@@ -63,10 +63,10 @@
                 <i class="fa-solid fa-network-wired text-indigo-500"></i> {{ t('filterOwner') }}
             </h3>
             <div class="flex flex-wrap gap-2">
-                <button @click="selectedUserId = null" class="px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 border" :class="selectedUserId === null ? 'bg-indigo-500 text-white border-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'">
+                <button @click="selectedUserId = null" class="owner-filter px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 border" :aria-pressed="selectedUserId === null" :class="selectedUserId === null ? 'bg-indigo-500 text-white border-indigo-400' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'">
                     <i class="fa-solid fa-earth-asia mr-1"></i> {{ t('allUsers') }}
                 </button>
-                <button v-for="u in currentSessionUsers" :key="u.id" @click="selectedUserId = u.id" class="min-w-0 max-w-full px-4 py-2 rounded-full text-sm flex items-center gap-2 transition-all duration-300 border" :class="selectedUserId === u.id ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'">
+                <button v-for="u in currentSessionUsers" :key="u.id" @click="selectedUserId = u.id" class="min-w-0 max-w-full owner-filter px-4 py-2 rounded-full text-sm flex items-center gap-2 transition-all duration-300 border" :aria-pressed="selectedUserId === u.id" :class="selectedUserId === u.id ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500' : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'">
                     <div class="w-5 h-5 shrink-0 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-[10px] text-white font-bold">{{ u.name ? u.name.charAt(0).toUpperCase() : '?' }}</div>
                     <span class="min-w-0 content-wrap">{{ u.name || '未知' }}</span>
                 </button>
@@ -150,7 +150,7 @@
                     <div class="min-w-0 flex-1">
                         <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3">
                             <span v-if="task.important" class="shrink-0 text-yellow-400 text-sm" title="重要提醒"><i class="fa-solid fa-star"></i></span>
-                            <span class="max-w-full content-wrap text-xs px-3 py-1 rounded-full bg-white/10 text-gray-200 backdrop-blur-md uppercase tracking-wide">{{ formatRepeat(task.repeat, task.interval_minutes) }}</span>
+                            <span class="max-w-full content-wrap text-xs px-3 py-1 rounded-full bg-white/10 text-gray-200 backdrop-blur-md uppercase tracking-wide">{{ task.is_random ? t('randomTask') : formatRepeat(task.repeat, task.interval_minutes) }}</span>
                             <span v-if="task.category" class="min-w-0 max-w-full content-wrap text-xs px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">{{ task.category }}</span>
                             <span v-if="task.paused" class="text-xs px-3 py-1 rounded-full bg-gray-500/40 text-gray-300">{{ t('schedulePaused') }}</span>
                             <span v-if="task.is_overdue_once" class="text-xs px-3 py-1 rounded-full bg-gray-500/40 text-gray-300">{{ t('overdueOnce') }}</span>
@@ -165,15 +165,17 @@
                         </div>
                     </div>
 
-                    <div class="shrink-0 flex items-center justify-end gap-3 md:opacity-0 md:group-hover:opacity-100 opacity-100 transition-opacity" style="opacity: 1;">
-                        <button :disabled="actionsDisabled" v-if="!task.paused" @click="doAction('pause', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-yellow-500/20 hover:text-yellow-400 flex justify-center items-center transition-all hover:scale-110" title="暂停任务">
+                    <div class="task-actions shrink-0 flex items-center justify-end gap-3">
+                        <button :disabled="actionsDisabled || !task.web_editable" @click="openEditor(task.job_id)" class="task-icon-button glass-panel" :title="t(task.web_editable ? 'edit' : 'editReadonly')" :aria-label="t(task.web_editable ? 'edit' : 'editReadonly')"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+                        <button :disabled="actionsDisabled || !task.web_revision" @click="toggleImportance(task.job_id)" class="task-icon-button glass-panel" :class="{'is-important': task.important}" :aria-pressed="!!task.important" :title="t(task.important ? 'unmarkImportant' : 'markImportant')" :aria-label="t(task.important ? 'unmarkImportant' : 'markImportant')"><i class="fa-star" :class="task.important ? 'fa-solid' : 'fa-regular'" aria-hidden="true"></i></button>
+                        <button :disabled="actionsDisabled" v-if="!task.paused" @click="doAction('pause', task.job_id)" class="w-12 h-12 rounded-full glass-panel task-icon-button action-pause flex justify-center items-center" :title="t('pause')" :aria-label="t('pause')">
                             <i class="fa-solid fa-pause"></i>
                         </button>
-                        <button :disabled="actionsDisabled" v-else @click="doAction('resume', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-green-500/20 hover:text-green-400 flex justify-center items-center transition-all hover:scale-110" title="恢复任务">
+                        <button :disabled="actionsDisabled" v-else @click="doAction('resume', task.job_id)" class="w-12 h-12 rounded-full glass-panel task-icon-button action-resume flex justify-center items-center" :title="t('resume')" :aria-label="t('resume')">
                             <i class="fa-solid fa-play"></i>
                         </button>
                         
-                        <button :disabled="actionsDisabled" @click="doAction('delete', task.job_id)" class="w-12 h-12 rounded-full glass-panel hover:bg-red-500/20 hover:border-red-500/50 hover:text-red-400 flex justify-center items-center transition-all hover:scale-110" :title="t('deleteTitle')">
+                        <button :disabled="actionsDisabled" @click="doAction('delete', task.job_id)" class="w-12 h-12 rounded-full glass-panel task-icon-button action-delete flex justify-center items-center" :title="t('deleteTitle')" :aria-label="t('deleteTitle')">
                             <i class="fa-solid fa-trash-can"></i>
                         </button>
                     </div>
@@ -181,6 +183,64 @@
                 </div>
             </div>
         </div>
+
+        <transition name="editor-sheet">
+        <div v-if="editor" class="editor-overlay" @keydown.esc.prevent.stop="closeEditor" @keydown.tab="trapEditorFocus">
+            <form ref="editorElement" role="dialog" aria-modal="true" aria-labelledby="edit-title" class="editor-panel glass-panel" @submit.prevent="saveEditor">
+                <header class="editor-header">
+                    <div class="editor-emblem"><i class="fa-solid fa-pen" aria-hidden="true"></i></div>
+                    <div class="editor-heading"><h2 id="edit-title">{{ t('edit') }}</h2><p>{{ t(editor.is_random ? 'randomSubtitle' : 'editSubtitle') }}</p></div>
+                    <button type="button" :disabled="mutationBusy" @click="closeEditor" class="editor-close" :aria-label="t('discard')"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+                </header>
+                <div class="editor-scroll">
+                <fieldset :disabled="mutationBusy" class="editor-fields">
+                    <legend class="editor-section-label">{{ t('detailsSection') }}</legend>
+                    <div v-if="editor.is_random" class="editor-random-note">
+                        <p><i class="fa-solid fa-shuffle" aria-hidden="true"></i> {{ t('randomBasicHelp') }}</p>
+                        <fieldset v-if="canEditBatch" class="editor-scope-control"><legend>{{ t('editScope') }}</legend>
+                            <div class="editor-segments" :class="{'is-batch': editBatch}">
+                                <label><input v-model="editBatch" type="radio" name="editor-scope" :value="false"><span>{{ t('scopeOne') }}</span></label>
+                                <label><input v-model="editBatch" type="radio" name="editor-scope" :value="true"><span>{{ batchScopeLabel }}</span></label>
+                            </div>
+                        </fieldset>
+                    </div>
+                    <label>{{ t('contentLabel') }}<textarea v-model="editForm.content" rows="3" required></textarea></label>
+                    <label>{{ t('categoryLabel') }}<input v-model="editForm.category" type="text" :placeholder="t('categoryPlaceholder')"></label>
+                    <div class="editor-schedule-heading"><span class="editor-section-label">{{ t('scheduleSection') }}</span><span class="editor-timezone"><i class="fa-regular fa-clock" aria-hidden="true"></i> {{ t('serverTime') }} · {{ serverTimezone || '—' }}</span></div>
+                    <div v-if="!editor.is_random" class="editor-time-field">
+                        <label>{{ t('timeLabel') }}<input v-model="editForm.time" type="datetime-local" step="60" required></label>
+                    </div>
+                    <fieldset v-if="!editor.is_random" class="editor-repeat-control"><legend>{{ t('repeatLabel') }}</legend>
+                        <div class="editor-repeat-options">
+                            <label v-for="rule in ['none','daily','weekly','monthly','yearly','interval']" :key="rule"><input v-model="editForm.repeat" type="radio" name="editor-repeat" :value="rule"><span>{{ rule === 'interval' ? t('repeatInterval') : formatRepeat(rule) }}</span></label>
+                        </div>
+                    </fieldset>
+                    <label v-if="!editor.is_random && editForm.repeat === 'interval'">{{ t('intervalLabel') }}<input v-model="editForm.interval_minutes" type="number" min="1" max="1440" step="1" required></label>
+                    <div v-if="editor.is_random" class="editor-random-time"><span>{{ t('randomTimeReadonly') }}</span><strong>{{ editor.time }}</strong>
+                        <p v-if="editor.time_range">{{ editor.time_range.start }} — {{ editor.time_range.end }}</p>
+                    </div>
+                    <p class="editor-hint">{{ t(editor.is_random ? 'randomScheduleHelp' : 'timeHelp') }}</p>
+                    <details class="editor-advanced"><summary><span><i class="fa-solid fa-bolt" aria-hidden="true"></i> {{ t('advanced') }}</span><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></summary>
+                        <label>{{ t('actionLabel') }}<textarea v-model="editForm.action" rows="3" aria-describedby="action-help"></textarea></label>
+                        <p id="action-help" class="editor-hint">{{ t('actionHelp') }}</p>
+                    </details>
+                </fieldset>
+                <details class="editor-metadata"><summary>{{ t('metadata') }}</summary>
+                    <p>ID: {{ editor.job_id }}</p><p>{{ editor.sid }}</p>
+                    <p>{{ t('ownerLabel') }}: {{ editor.owner_id || editor.creator_id || '—' }}</p>
+                    <p>{{ t('sourceLabel') }}: {{ editor.source || '—' }}</p>
+                    <p>{{ t('createdLabel') }}: {{ editor.created_at || '—' }}</p>
+                </details>
+                <p v-if="editError" role="alert" class="editor-error">{{ editError }}</p>
+                </div>
+                <div class="editor-footer">
+                    <button type="button" :disabled="mutationBusy" @click="closeEditor" class="editor-button">{{ t('cancel') }}</button>
+                    <button type="submit" :disabled="mutationBusy || editBlocked || actionsDisabled" class="editor-button editor-save"><i class="fa-solid" :class="mutationBusy ? 'fa-spinner fa-spin' : 'fa-check'" aria-hidden="true"></i> {{ t(mutationBusy ? 'submitting' : 'save') }}</button>
+                </div>
+            </form>
+        </div>
+
+        </transition>
 
         <!-- In-page confirmation works inside the host's sandboxed iframe. -->
         <transition name="fade">
@@ -241,7 +301,7 @@
     </div>
 
     <p id="startup-fallback" role="status">正在加载提醒页面；若长时间停留，请检查网络并刷新。<br>Loading reminders; if this persists, check the network and refresh.</p>
-    <script src="./i18n.js"></script>
-    <script src="./app.js"></script>
+    <script src="./i18n.js?v=e210fe2ac200"></script>
+    <script src="./app.js?v=a9c0ef7822bb"></script>
 </body>
 </html>

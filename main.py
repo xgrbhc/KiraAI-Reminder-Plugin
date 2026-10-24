@@ -77,6 +77,7 @@ from .confirmation_routes import ConfirmationRoutes
 from .delivery import DeliveryTracker, delivery_time_fields
 from .reminder_service import ReminderService
 from .scheduler import ReminderScheduler, reminder_schedule_info
+from .web_management import mutate as mutate_web_reminder, web_metadata
 from .time_utils import (
     determine_random_count,
     generate_multiple_random_times,
@@ -585,8 +586,9 @@ class ReminderPlugin(BasePlugin):
             data = await self._storage.load()
             reminders = data.get(sid, [])
             scheduler = getattr(self, "_scheduler", None)
-            return {"status": "ok", "data": [
-                dict(record, **reminder_schedule_info(scheduler, record)) for record in reminders
+            return {"status": "ok", "server_timezone": str(get_local_now().astimezone().tzinfo), "data": [
+                dict(record, **metadata, **reminder_schedule_info(scheduler, record))
+                for record, metadata in zip(reminders, web_metadata(reminders))
             ]}
         except Exception as e:
             logger.error(f"[Reminder] WebUI 获取提醒列表失败: {e}")
@@ -633,6 +635,8 @@ class ReminderPlugin(BasePlugin):
 
     @register.api("POST", "/reminders/{action}")
     async def api_action_reminders(self, action: str, payload: dict):
+        if action in ("edit", "importance"):
+            return await mutate_web_reminder(self, action, payload)
         sid = payload.get("session_id")
         job_id = payload.get("job_id")
         force = payload.get("force", True)
@@ -1529,7 +1533,7 @@ class ReminderPlugin(BasePlugin):
         )
     @register_tool(
         name="delete_reminder",
-        description="根据准确 job_id 删除提醒，没有准确目标时先查询。重要提醒只需一次真实删除确认，收到批准后不用再次询问。",
+        description="根据准确 job_id 删除提醒，没有准确目标时先查询。真实用户私聊中由你根据上下文判断是否需追问，含重要提醒，不要求固定确认口令；其他场景按工具返回的确认流程处理。",
         params={
             "type": "object",
             "properties": {
@@ -1567,7 +1571,7 @@ class ReminderPlugin(BasePlugin):
 
     @register_tool(
         name="mark_reminder_important",
-        description="将指定提醒标记为重要。没有准确 job_id 时先查询；删除重要提醒需真实用户确认。",
+        description="将指定提醒标记为重要。没有准确 job_id 时先查询；真实用户私聊中的删除由你结合上下文判断，其他场景保留重要删除确认。",
         params={
             "type": "object",
             "properties": {"job_id": {"type": "string", "description": "提醒 ID"},
@@ -1583,7 +1587,7 @@ class ReminderPlugin(BasePlugin):
 
     @register_tool(
         name="unmark_reminder_important",
-        description="取消指定提醒的重要标记。已有重要标记时需一次真实用户确认，不能先取消标记绕过删除保护。",
+        description="取消指定提醒的重要标记。真实用户私聊中由你根据上下文判断是否需追问；其他场景仍需真实用户确认。",
         params={
             "type": "object",
             "properties": {"job_id": {"type": "string", "description": "提醒 ID"},
@@ -1625,7 +1629,7 @@ class ReminderPlugin(BasePlugin):
 
     @register_tool(
         name="edit_reminder",
-        description="修改提醒，只提供需修改的字段。已有准确 job_id 无需重复查询；多人确认后执行固定参数，不再次询问。",
+        description="修改提醒，只提供需修改的字段。随机任务仅可修改尚未触发项的内容、分类和动作，可选择本条或本批次，保留已抽取时间。已有准确 job_id 无需重复查询；多人确认后执行固定参数，不再次询问。",
         params={
             "type": "object",
             "properties": {
@@ -1636,6 +1640,7 @@ class ReminderPlugin(BasePlugin):
                 "interval_minutes": {"type": "integer", "description": "新间隔分钟数（可选）"},
                 "category": {"type": "string", "description": "新提醒分类（可选）"},
                 "action": {"type": "string", "description": "新自动动作指令（可选）；高风险字段，受 action_policy 独立控制"},
+                "edit_batch": {"type": "boolean", "description": "仅随机任务适用：true 修改本批次尚未触发项，false 仅本条；默认 false，不修改已到期任务及投递记录"},
                 "source_ref": {"type": "string", "description": "多人时所选请求消息的来源标记"},
             },
             "required": ["job_id"],
@@ -1645,10 +1650,11 @@ class ReminderPlugin(BasePlugin):
                             content: Optional[str] = None, time: Optional[str] = None,
                             repeat: Optional[str] = None, interval_minutes: Optional[int] = None,
                             category: Optional[str] = None, action: Optional[str] = None,
-                            source_ref: Optional[str] = None, **kwargs) -> str:
+                            source_ref: Optional[str] = None, edit_batch: bool = False, **kwargs) -> str:
         return await self._confirmation_routes().route(
             event, "edit_reminder", dict(job_id=job_id, content=content, time=time, repeat=repeat,
-                                        interval_minutes=interval_minutes, category=category, action=action), source_ref,
+                                        interval_minutes=interval_minutes, category=category, action=action,
+                                        edit_batch=edit_batch), source_ref,
         )
 
     @register_tool(

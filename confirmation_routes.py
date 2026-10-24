@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .confirmation import PendingRequests, CheckedReminderStorage, reminder_targets
-from .identity import PrincipalKind, event_messages
+from .identity import EventOrigin, PrincipalKind, event_messages
 from .message_sources import CONFIRMATION_REQUIRED, requires_source_selection, inspect_user_message
 from .permissions import ReminderOperation
 from .time_utils import validate_random_count_params
@@ -32,7 +32,7 @@ class ConfirmationRoutes:
         target = str(item.params.get("job_id") or item.params.get("delivery_id") or "")[:160]
         return (f"⏳ 待确认请求 {item.request_id}：{item.operation}。"
                 f"{'目标编号：' + target + '。' if target else ''}{visibility}"
-                f"请自然询问对应用户；唯一请求回复“{reply}”即可，多项时附编号。"
+                f"请自然询问对应用户，回复“{reply}”；同类请求有多项时附编号。"
                 "群聊需 @ 或回复当前机器人；5 分钟内有效。"
                 "收到确认后调用 confirm_reminder_request；不需要再次询问。")
 
@@ -68,6 +68,18 @@ class ConfirmationRoutes:
                 critical = operation in {"delete_reminder", "unmark_reminder_important"} and any(
                     record.get("important") for record in targets["records"])
                 important_delete = critical and operation == "delete_reminder"
+                if critical and not mixed and not needs_confirmation:
+                    messages = event_messages(event)
+                    contexts = [inspect_user_message(event, message) for message in messages]
+                    parts = sid.split(":", 2)
+                    if (len(parts) == 3 and parts[1] == "dm"
+                            and principal.origin is EventOrigin.USER_MESSAGE
+                            and contexts and all(context is not None
+                                and context.sid == sid
+                                and context.message.sender.user_id == parts[2]
+                                for context in contexts)):
+                        # Delegate conversational consent to the model, retaining ACL and snapshot checks.
+                        return await self.execute(event, operation, params, targets, approved=True)
                 if operation == "edit_reminder":
                     allowed, reason = plugin._check_action_permission(event, params.get("action"))
                     if not allowed:

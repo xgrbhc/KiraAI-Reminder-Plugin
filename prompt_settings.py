@@ -6,6 +6,7 @@ from hashlib import sha256
 # Released schema defaults with source commits. Keep these when defaults change.
 KNOWN_DEFAULT_HASHES = {
     "usage_prompt": frozenset({
+        "a6c143d7df5bde71761969cd10d5098ef0fabd3481380e2afd1727f08a35269f",  # Private-chat consent update
         "d35ea3248bda086ad1cbd67a04a75be98d78600c1768119a914bda6f85f29f41",  # 80b13126
         "a93b222fc8eaaf412ab289aa9c3b4e11e69b350cc6f1547b0fa03ac09a8cf809",  # 05d89677
         "655efd8853900ca100ac099d2809c72a5be83fd61f98a054b532708278d7953f",  # b61d49b1

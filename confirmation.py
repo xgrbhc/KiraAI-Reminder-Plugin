@@ -65,6 +65,13 @@ class PendingRequests:
         self._items.clear()
         self._seen.clear()
 
+    @staticmethod
+    def _accepts(item, verb):
+        return (verb == "取消"
+                or (item.delete_confirmation and verb == "确认删除")
+                or (not item.delete_confirmation and verb in {"确认", "同意"})
+                or (item.operation == "delete_reminder" and verb == "确认删除"))
+
     def _prune(self):
         now = self._clock()
         self._items = {key: item for key, item in self._items.items() if item.expires_at > now}
@@ -119,15 +126,14 @@ class PendingRequests:
             self._seen[replay_key] = self._clock() + TTL_SECONDS
             own = [item for item in self._items.values()
                    if actor_scope(item.context) == actor_scope(context)]
-            candidates = [item for item in own if item.request_id == key] if key else own
+            candidates = ([item for item in own if item.request_id == key] if key
+                          else [item for item in own if self._accepts(item, verb)])
             if len(candidates) != 1:
                 return
             item = candidates[0]
             if verb == "取消":
                 del self._items[item.request_id]
-            elif ((item.delete_confirmation and verb == "确认删除")
-                  or (not item.delete_confirmation and verb in {"确认", "同意"})
-                  or (item.operation == "delete_reminder" and verb == "确认删除")):
+            elif self._accepts(item, verb):
                 item.proof = proof
 
     async def visible(self, event):
@@ -162,7 +168,7 @@ def reminder_targets(data, sid, params):
     target = next((r for r in reminders if r.get("job_id") == job_id), None)
     if target is None:
         raise ValueError("目标提醒不存在，请重新查询")
-    batch_id = target.get("random_batch_id") if params.get("delete_batch") else None
+    batch_id = target.get("random_batch_id") if params.get("delete_batch") or params.get("edit_batch") else None
     selected = [r for r in reminders if r.get("random_batch_id") == batch_id] if batch_id else [target]
     if len(selected) > 100:
         raise ValueError("本次目标过多，请分次处理")

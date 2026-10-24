@@ -38,6 +38,14 @@ const state = {
  }
 };
 const preview = new URLSearchParams(location.search);
+if(preview.has('random_edit')) {
+ const base={content:'隔离测试：随机喝水提醒',repeat:'none',creator_id:'alice',owner_id:'alice',creator_name:'Alice',is_random:true,random_batch_id:'batch-demo',random_total:3,time_range:{start:'2030-01-01 09:00',end:'2030-01-01 18:00'}};
+ state['Test:dm:alice'].reminders=[
+  {...base,job_id:'random-1',time:'2030-01-01 10:00',random_index:1},
+  {...base,job_id:'random-2',time:'2030-01-01 14:00',random_index:2,paused:true},
+  {...base,job_id:'random-past',time:'2000-01-01 10:00',random_index:3,is_overdue_once:true}
+ ];
+}
 if (preview.has('stress')) {
  const r = state['Test:dm:alice'].reminders[0];
  Object.assign(r, {
@@ -76,6 +84,8 @@ const copy = value => JSON.parse(JSON.stringify(value));
 const ok = data => ({status:'ok',data});
 const error = msg => ({status:'error',msg});
 const tokens = new Map();
+const future = r => r.time > new Date().getFullYear()+'-01-01 00:00';
+const batchOf = (s,r) => s.reminders.filter(item=>item.random_batch_id===r.random_batch_id);
 let sessionReads = 0;
 window.PluginPageContext = {
  ready: async () => ({pluginId:'reminder_plugin',locale:preview.get('locale')==='en'?'en':'zh'}),
@@ -94,7 +104,9 @@ window.PluginPageContext = {
     return ok(Object.entries(state).map(([id,s])=>({id,count:s.reminders.length,users:[...new Map(s.reminders.map(r=>[r.creator_id,{id:r.creator_id,name:r.creator_name}])).values()]})));
    }
    const [kind,...parts]=endpoint.split('/'); const sid=decodeURIComponent(parts.join('/'));
-   return state[sid] && ['reminders','deliveries'].includes(kind) ? ok(copy(state[sid][kind])) : error('Test session not found');
+   if(!state[sid] || !['reminders','deliveries'].includes(kind)) return error('Test session not found');
+   if(kind==='reminders') return {status:'ok',server_timezone:'UTC+08:00',data:state[sid].reminders.map(r=>({...copy(r),web_revision:JSON.stringify(r),web_editable:(!r.is_random || future(r)) && r.source!=='autonomous',...(r.is_random?{web_batch_revision:JSON.stringify(batchOf(state[sid],r)),web_batch_editable_count:batchOf(state[sid],r).filter(future).length}:{})}))};
+   return ok(copy(state[sid][kind]));
   },
   async post(endpoint,payload) {
    window.parent.postMessage({kind:'mock-post'},location.origin);
@@ -116,6 +128,10 @@ window.PluginPageContext = {
     if(action==='delete') {
      if(r.important){tokens.set(payload.session_id+':testtoken',r.job_id);return error('注意：这是重要提醒\\n请确认删除令牌: testtoken');}
      s.reminders=s.reminders.filter(item=>item!==r);
+    } else if(action==='edit' || action==='importance') {
+     if(payload.revision!==JSON.stringify(payload.edit_batch?batchOf(s,r):r)) return {...error('Changed'),code:'conflict'};
+     if(action==='importance') r.important=payload.important;
+     else for(const item of payload.edit_batch?batchOf(s,r).filter(future):[r]) Object.assign(item,payload.changes);
     } else if(action==='pause') r.paused=true;
     else if(action==='resume') r.paused=false;
     else return error('Invalid test action');
@@ -160,8 +176,8 @@ class Handler(BaseHTTPRequestHandler):
             content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
             if name == "index.html":
                 content_type = "text/html"
-                body = body.decode("utf-8").replace('<script src="./i18n.js"></script>',
-                                                  '<script src="./test-bridge.js"></script><script src="./i18n.js"></script>')
+                body = body.decode("utf-8").replace('<script src="./i18n.js',
+                                                  '<script src="./test-bridge.js"></script><script src="./i18n.js')
         else:
             self.send_error(404)
             return
